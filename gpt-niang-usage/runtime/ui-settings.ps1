@@ -205,6 +205,9 @@ function Initialize-WidgetSettingsMenu {
   } -ReturnItem
   $script:settingsMenuUi.Completion=Add-SettingsAction '回答结束提醒' {param($sender,$event)Set-CompletionNotificationEnabled ([bool]$sender.IsChecked);Update-WidgetSettingsMenu} -Checkable -ReturnItem
   $script:settingsMenuUi.Completion.ToolTip='回答结束后在当前位置提醒；后台时临时置顶，显示后恢复'
+  if($SkinManaged){
+    Add-SettingsAction '上班与喝水状态' {Update-SkinWorkday;Open-WidgetBubble 'workday'}
+  }
   Add-SettingsDivider
   $script:settingsMenuUi.Display=Add-SettingsSubmenu '显示与位置' {
   $script:settingsMenuUi.Follow=Add-SettingsAction '仅在 Codex 窗口内' {Set-WidgetFollowHost $true;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost} -Checkable -ReturnItem
@@ -216,6 +219,7 @@ function Initialize-WidgetSettingsMenu {
   Add-SettingsDivider
   Add-SettingsAction '恢复右下角位置' {if($script:followHost){$script:offsetRight=0;$script:offsetLeft=0;$script:offsetBottom=0;$script:anchor='right'}else{$script:desktopLeft=$null;$script:desktopTop=$null};$script:side='right';$script:lastPosition=$null;Set-Facing;Hide-Quota;Save-Settings;Tick-Widget} -StayOpen
   } -ReturnItem
+  if(!$SkinManaged){
   $script:settingsMenuUi.Updates=Add-SettingsSubmenu '更新' {
     $script:settingsMenuUi.UpdateVersion=Add-SettingsAction '当前版本' {} -ReturnItem;$script:settingsMenuUi.UpdateVersion.IsEnabled=$false
     Add-SettingsAction '检查并更新' {Start-WidgetUpdate 'manual'}
@@ -223,6 +227,7 @@ function Initialize-WidgetSettingsMenu {
     $status=New-SettingsText '' 12 '#927AAB';$status.TextWrapping=[Windows.TextWrapping]::Wrap
     $script:settingsMenuUi.UpdateStatus=Add-SettingsPanel $status -Passive -ReturnItem
   } -ReturnItem
+  }
   Add-SettingsDivider
   $exit=Add-SettingsAction '退出 GPT 娘' {Exit-WidgetForSession} -ReturnItem;$exit.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A1788D')
   $script:context.Add_Opened({Pause-CompletionNotification;Reset-WidgetAutoQuoteSchedule;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost})
@@ -266,7 +271,7 @@ function Update-WidgetSizePresets{
 function Update-WidgetSettingsMenu{
   $script:settingsMenuSync=$true
   try{
-    Update-WidgetUpdateMenu
+    if(!$SkinManaged){Update-WidgetUpdateMenu}
     $script:settingsMenuUi.MusicEnabled.IsChecked=Test-WidgetMusicActive
     $script:settingsMenuUi.Completion.IsChecked=$script:completionNotificationsEnabled
     $script:settingsMenuUi.AutoQuoteEnabled.IsChecked=$script:autoQuoteEnabled

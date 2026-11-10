@@ -37,6 +37,7 @@
       <StackPanel x:Name="QuotaText" VerticalAlignment="Center">
         <Grid x:Name="HeaderRow" Height="16">
           <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+          <Button x:Name="WorkdayOpen" Grid.Column="0" Visibility="Collapsed" Width="20" Height="16" Content="⏱" FontSize="11" ToolTip="查看上班与喝水状态"/>
           <TextBlock x:Name="Header" Grid.Column="1" Text="剩余额度" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="136" TextAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" Foreground="#7D6B91" IsHitTestVisible="False" ToolTip="重置时间按当前机器的本地时间显示"/>
           <Button x:Name="Refresh" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Width="20" Height="16" Content="↻" FontSize="12" ToolTip="立即刷新额度"/>
         </Grid>
@@ -65,6 +66,20 @@
         <TextBlock x:Name="Status" Visibility="Collapsed" Text="正在读取额度…"/>
       </StackPanel>
         <TextBlock x:Name="QuoteText" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" FontSize="20" FontWeight="Bold" LineHeight="25" Foreground="#745A98" IsHitTestVisible="False" Text="我在这儿，慢慢来就好。"/>
+        <Border x:Name="WorkdaySurface" Visibility="Collapsed" CornerRadius="6" Padding="3,1">
+          <StackPanel x:Name="WorkdayText" VerticalAlignment="Center" TextElement.Foreground="#443552">
+            <TextBlock Text="上班状态 · 与皮肤同步" FontSize="11" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="WorkdayCountdown" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="WorkdayWater" FontSize="13" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="WorkdayIncome" FontSize="11" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="WorkdayUsage" FontSize="10" HorizontalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,2,0,0">
+              <Button x:Name="WorkdayPrimary" Content="上班" FontSize="11" Width="40"/>
+              <Button x:Name="WorkdayDrink" Content="我已喝水" FontSize="11" Width="72"/>
+              <Button x:Name="WorkdaySettings" Content="⚙" FontSize="13" Width="25" ToolTip="打开皮肤的工资与打卡设置"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
       </Grid>
     <Ellipse x:Name="LiveDot" Visibility="Collapsed" Canvas.Left="134" Canvas.Top="17" Width="4" Height="4" Fill="#9B86C1" IsHitTestVisible="False"/>
     </Canvas>

@@ -1,3 +1,4 @@
+if(!(Get-Variable -Name SkinManaged -ErrorAction SilentlyContinue)){$SkinManaged=$false}
 if(!('CompletionWindowLayer' -as [type])){
   Add-Type -TypeDefinition @'
 using System;using System.Runtime.InteropServices;
@@ -90,7 +91,7 @@ function Start-TemporaryCompletion {
   }
 }
 
-if(!('GptCompletionMonitorOutput' -as [type])){
+if(!$SkinManaged -and !('GptCompletionMonitorOutput' -as [type])){
   Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
@@ -123,7 +124,7 @@ function Initialize-CompletionNotificationState($Settings=$null) {
   $script:completionReceived=0;$script:completionDisplayCount=0;$script:completionLastError=$null
   $script:completionAcknowledgedAt=0;$script:completionTemporary=$null
 }
-function Clear-CompletionNotifications {$script:completionPending=$false;[GptCompletionMonitorOutput]::Clear()}
+function Clear-CompletionNotifications {$script:completionPending=$false;if(!$SkinManaged){[GptCompletionMonitorOutput]::Clear()}}
 function Dismiss-CompletionNotification {
   Stop-TemporaryCompletion
   $script:completionAcknowledgedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -131,6 +132,7 @@ function Dismiss-CompletionNotification {
 }
 
 function Start-CompletionMonitor {
+  if($SkinManaged){return}
   if(!$script:completionNotificationsEnabled){return}
   if($script:completionProcess){
     if(!$script:completionProcess.HasExited){return}
@@ -177,6 +179,7 @@ function Stop-CompletionMonitor {
   $script:completionProcess.Dispose();$script:completionProcess=$null
 }
 function Set-CompletionNotificationEnabled([bool]$Enabled) {
+  if($SkinManaged){Send-SkinAction 'completion.configure' @{enabled=$Enabled}}
   if($Enabled-eq $script:completionNotificationsEnabled){return}
   $script:completionNotificationsEnabled=$Enabled;$script:completionRetryAfter=0
   if($Enabled){Start-CompletionMonitor}
@@ -197,6 +200,7 @@ function Receive-CompletionMonitorLine([string]$Line) {
   }catch{}
 }
 function Read-CompletionMonitorOutput {
+  if($SkinManaged){return}
   $line=$null
   for($i=0;$i-lt 64 -and [GptCompletionMonitorOutput]::TryRead([ref]$line);$i++){
     Receive-CompletionMonitorLine $line;$line=$null

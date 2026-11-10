@@ -109,19 +109,23 @@ export function resolveCodexExecutable(configuredPath,{env=process.env,platform=
 }
 
 // Only three read-only protocol methods are sent. There is no thread or model call.
-export function readUsage(cli, {timeoutMs=18000,fallbackTimeoutMs=10000,spawnProcess=spawn,onAccount=()=>{}}={}) {
+export function readUsage(cli, {timeoutMs=18000,fallbackTimeoutMs=10000,spawnProcess=spawn,onAccount=()=>{},expectedAccountHash=null,signal=null}={}) {
   return new Promise(resolve=>{
     let finished=false,proc,lines,accountKey=null,account=null,planInfo=identifyPlan(null,null),expectedId=1,directFallback=false;
     const failure=(error,errorCode)=>({ok:false,queryOk:false,error,windows:[],...planInfo,accountKey,clearPrevious:!accountKey,...(errorCode?{errorCode}:{})});
     const stopChild=()=>{try{proc?.stdin.end();proc?.kill();}catch{}};
     const finish=data=>{
       if(finished)return; finished=true; clearTimeout(timer);
+      signal?.removeEventListener('abort',abort);
       lines?.close();
       process.removeListener('exit',stopChild);
       stopChild();
       resolve(data);
     };
     let timer=setTimeout(()=>finish(failure('查询超时，稍后重试')),timeoutMs);
+    const abort=()=>finish(failure('查询已取消','CANCELLED'));
+    if(signal?.aborted){abort();return;}
+    signal?.addEventListener('abort',abort,{once:true});
     try{proc=spawnProcess(cli,['app-server','--stdio'],{windowsHide:true,stdio:['pipe','pipe','pipe']});}
     catch{finish(failure('Codex 额度服务暂不可用'));return;}
     process.once('exit',stopChild);
@@ -158,6 +162,11 @@ export function readUsage(cli, {timeoutMs=18000,fallbackTimeoutMs=10000,spawnPro
         }
         const type=m.result?.account?.type;
         account=m.result?.account;
+        const workspace=account?.accountId??account?.chatgptAccountId;
+        if(expectedAccountHash && typeof workspace==='string'
+          && createHash('sha256').update(workspace.trim()).digest('hex')!==expectedAccountHash){
+          return finish(failure('当前窗口与额度查询账户不一致','ACCOUNT_CONTEXT_MISMATCH'));
+        }
         planInfo=identifyPlan(account?.planType,null,type??null);
         // Account details and credentials are neither stored nor displayed.
         if(type!=='chatgpt' && type!=='chatgptAuthTokens')return finish(failure('请在 Codex 中使用 ChatGPT 账号登录（API Key 不提供订阅额度）','AUTH_MODE_UNSUPPORTED'));
@@ -167,6 +176,11 @@ export function readUsage(cli, {timeoutMs=18000,fallbackTimeoutMs=10000,spawnPro
         send({id:3,method:'account/rateLimits/read',params:{}});
       } else if(m.id===3){
         if(m.error)return finish(failure('暂时无法读取额度，请检查登录状态或稍后重试','RATE_LIMITS_READ_FAILED'));
+        const workspace=m.result?.accountId??account?.accountId??account?.chatgptAccountId;
+        if(expectedAccountHash && typeof workspace==='string'
+          && createHash('sha256').update(workspace.trim()).digest('hex')!==expectedAccountHash){
+          return finish(failure('当前窗口与额度查询账户不一致','ACCOUNT_CONTEXT_MISMATCH'));
+        }
         if(directFallback){
           // accountId comes from the official quota response, not from local
           // credentials. It must be present, but is never stored or exposed.
@@ -179,11 +193,13 @@ export function readUsage(cli, {timeoutMs=18000,fallbackTimeoutMs=10000,spawnPro
           return finish(data);
         }
         const data=normalizeLimits(m.result);
+        // A fresh CLI read without a comparable native identity must not authorize stale reuse.
+        if(expectedAccountHash){data.accountVerified=false;data.clearPrevious=true;}
         planInfo=identifyPlan(account?.planType,data.plan,account?.type);
         Object.assign(data,planInfo);
         const currentKey=accountFingerprint({...account,planType:data.plan});
         if(currentKey!==accountKey){accountKey=currentKey;try{onAccount(accountKey);}catch{return finish(failure('无法保存套餐切换状态'));}}
-        data.clearPrevious=(data.queryOk && !data.ok) || !accountKey;
+        data.clearPrevious=data.clearPrevious===true || (data.queryOk && !data.ok) || !accountKey;
         data.accountKey=accountKey;
         finish(data);
       }

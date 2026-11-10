@@ -1,3 +1,4 @@
+if(!(Get-Variable -Name SkinManaged -ErrorAction SilentlyContinue)){$SkinManaged=$false}
 function Initialize-WidgetUpdater {
   $script:updateProcess=$null;$script:updateLastTick=0;$script:updateStartedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$script:updateCleanupChecked=$false
   $preferences=Read-WidgetUpdateJson (Join-Path $script:dataDir 'update-preferences.json')
@@ -7,6 +8,7 @@ function Test-WidgetUpdateEditor {
   return [bool]($script:audioDialogOpen -or ($script:quoteEditor -and $script:quoteEditor.IsVisible) -or ($script:colorTriggerEditor -and $script:colorTriggerEditor.IsVisible) -or ($script:characterGallery -and $script:characterGallery.IsVisible))
 }
 function Start-WidgetUpdate([string]$Mode='manual') {
+  if($SkinManaged){return}
   if($script:updateProcess){if(!$script:updateProcess.HasExited){return};$script:updateProcess.Dispose();$script:updateProcess=$null}
   if($Mode-eq 'manual' -and (Test-WidgetUpdateEditor)){
     [Windows.MessageBox]::Show($script:window,'请先保存并关闭编辑窗口，再检查更新。','GPT 娘更新')|Out-Null;return
@@ -27,6 +29,7 @@ function Set-WidgetAutomaticUpdate([bool]$Enabled) {
   Update-WidgetUpdateMenu
 }
 function Update-WidgetUpdateMenu {
+  if($SkinManaged){return}
   if(!$script:settingsMenuUi.UpdateVersion){return}
   $script:settingsMenuUi.UpdateVersion.Header='当前版本：'+$script:config.version+$(if($script:config.localBuild){' · 本机修订 '+$script:config.localBuild})
   $script:settingsMenuUi.AutoUpdate.IsChecked=$script:autoUpdate

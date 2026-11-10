@@ -1,9 +1,14 @@
-param([switch]$CheckOnly,[switch]$Preview,[string]$AppDir=$PSScriptRoot)
+param([switch]$CheckOnly,[switch]$Preview,[string]$AppDir=$PSScriptRoot,[switch]$SkinManaged,[string]$DataDir,[string]$NodePath)
 $ErrorActionPreference='Stop'
 $script:appDir=$AppDir
 $script:configPath=Join-Path $script:appDir 'installation.json'
-if(!(Test-Path -LiteralPath $script:configPath)){throw 'Please run Install.ps1 first.'}
-$script:config=Get-Content -LiteralPath $script:configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if($SkinManaged){
+  if(![IO.Path]::IsPathRooted($DataDir) -or ![IO.File]::Exists($NodePath)){throw 'Invalid skin-managed runtime paths.'}
+  $script:config=[pscustomobject]@{dataDir=$DataDir;nodePath=$NodePath}
+}else{
+  if(!(Test-Path -LiteralPath $script:configPath)){throw 'Please run Install.ps1 first.'}
+  $script:config=Get-Content -LiteralPath $script:configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+}
 $script:dataDir=$script:config.dataDir
 $null=New-Item -ItemType Directory -Path $script:dataDir -Force
 . (Join-Path $script:appDir 'runtime\quotes.ps1')
@@ -16,14 +21,17 @@ $null=New-Item -ItemType Directory -Path $script:dataDir -Force
 . (Join-Path $script:appDir 'runtime\host-follow.ps1')
 . (Join-Path $script:appDir 'runtime\host-ready.ps1')
 . (Join-Path $script:appDir 'runtime\host-occlusion.ps1')
-. (Join-Path $script:appDir 'runtime\supervisor-task.ps1')
-. (Join-Path $script:appDir 'runtime\update-common.ps1')
-. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\update-ui.ps1'),[Text.Encoding]::UTF8)))
+if(!$SkinManaged){
+  . (Join-Path $script:appDir 'runtime\supervisor-task.ps1')
+  . (Join-Path $script:appDir 'runtime\update-common.ps1')
+  . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\update-ui.ps1'),[Text.Encoding]::UTF8)))
+}
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\color-theme.ps1'),[Text.Encoding]::UTF8)))
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\music.ps1'),[Text.Encoding]::UTF8)))
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\quote-layout.ps1'),[Text.Encoding]::UTF8)))
 Initialize-WidgetQuoteLayouts $script:appDir
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Windows.Forms,System.Drawing
+if($SkinManaged){. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\skin-managed.ps1'),[Text.Encoding]::UTF8)))}
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
@@ -467,12 +475,14 @@ function Apply-Scene {
   if($script:widgetColors){Update-WidgetColorScene}
   $quota=$script:bubbleMode-eq 'quota'
   $script:ui.QuotaText.Visibility=if($quota){[Windows.Visibility]::Visible}else{[Windows.Visibility]::Collapsed}
-  $script:ui.QuoteText.Visibility=if($quota){[Windows.Visibility]::Collapsed}else{[Windows.Visibility]::Visible}
+  $workday=$SkinManaged -and $script:bubbleMode-eq 'workday'
+  $script:ui.QuoteText.Visibility=if($quota -or $workday){[Windows.Visibility]::Collapsed}else{[Windows.Visibility]::Visible}
+  if($SkinManaged -and $script:ui.WorkdaySurface){$script:ui.WorkdaySurface.Visibility=if($workday){[Windows.Visibility]::Visible}else{[Windows.Visibility]::Collapsed}}
   $script:ui.Refresh.Visibility=$script:ui.QuotaText.Visibility;$script:ui.LiveDot.Visibility=[Windows.Visibility]::Collapsed
   Update-BubbleTooltip
 }
 function Update-BubbleTooltip {
-  $copy=if($script:bubbleMode-in @('quote','completion')){$script:ui.QuoteText.Tag}else{
+  $copy=if($script:bubbleMode-in @('quote','completion','reminder')){$script:ui.QuoteText.Tag}elseif($script:bubbleMode-eq 'workday'){'计时与皮肤详细信息同步；点击齿轮编辑工资与打卡设置。'}else{
     $parts=@()
     if($script:status.planLabel){$parts+='当前套餐：'+$script:status.planLabel}
     foreach($row in (Get-QuotaRows)){
@@ -557,10 +567,10 @@ function Tick-WidgetAutoQuote([long]$Now,[bool]$Visible) {
 function Show-Quota {
   $wasCollapsed=$script:collapsed
   Open-WidgetBubble 'quota'
-  if($wasCollapsed){Request-Refresh}
+  if($wasCollapsed -and !$SkinManaged){Request-Refresh}
 }
 function Show-Quote {Open-WidgetBubble 'quote'}
-function Open-WidgetBubble([ValidateSet('quota','quote','completion')][string]$Mode) {
+function Open-WidgetBubble([ValidateSet('quota','quote','completion','workday','reminder')][string]$Mode) {
   Reset-WidgetAutoQuoteSchedule
   if(!$script:collapsed){if($Mode-eq 'quote' -or $script:bubbleMode-ne $Mode){Switch-Scene $Mode}else{Restart-SceneTtl};return}
   $script:bubbleEpoch++;$script:collapsed=$false;$script:sceneRevision++
@@ -615,8 +625,12 @@ function Animate-Press([bool]$down) {
   Animate-Value $script:ui.PressScale ([Windows.Media.ScaleTransform]::ScaleXProperty) $x 220 0 $true
   Animate-Value $script:ui.PressScale ([Windows.Media.ScaleTransform]::ScaleYProperty) $y 220 0 $true
 }
-function Request-Refresh {[IO.File]::WriteAllText((Join-Path $script:dataDir 'refresh.flag'),([DateTime]::UtcNow.ToString('o')+' '+[Guid]::NewGuid().ToString('N')))}
+function Request-Refresh {
+  if($SkinManaged){Send-SkinAction 'quota.refresh';return}
+  [IO.File]::WriteAllText((Join-Path $script:dataDir 'refresh.flag'),([DateTime]::UtcNow.ToString('o')+' '+[Guid]::NewGuid().ToString('N')))
+}
 function Exit-WidgetForSession {
+  if($SkinManaged){Send-SkinAction 'enable' @{enabled=$false};$script:window.Close();return}
   if($script:followHost){Set-WidgetSupervisorPause -AppDir $script:appDir -HostHandle $script:hostHandle.ToInt64() -HostPid ([GptWidgetNative]::ProcessId($script:hostHandle))}
   else{Write-WidgetSupervisorJson (Join-Path $script:dataDir 'supervisor-pause.json') @{desktop=$true;at=[DateTime]::UtcNow.ToString('o')}}
   $script:window.Close()
@@ -693,11 +707,13 @@ function Set-ResetTimeMode([string]$mode,[long]$nowMilliseconds){
   }
 }
 function Update-Quota {
+  if(!$SkinManaged){
   $file=Join-Path $script:dataDir 'status.json'
   try{$stamp=[IO.File]::GetLastWriteTimeUtc($file).Ticks
     if(!(Test-Path -LiteralPath $file)){$script:status=$null;$script:statusStamp=0}
     elseif($stamp-ne $script:statusStamp){$script:status=Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json;$script:statusStamp=$stamp}
   }catch{$script:status=$null;$script:statusStamp=0}
+  }
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
   foreach($row in (Get-QuotaRows)){
     $prefix=$row.prefix;$q=$row.window
@@ -799,7 +815,7 @@ $script:messageHook=[Windows.Interop.HwndSourceHook]{param($hwnd,$msg,$w,$l,[ref
   if($msg-eq 0x21){$handled.Value=$true;return [IntPtr]3};return [IntPtr]::Zero
 }
 $source.AddHook($script:messageHook)
-Initialize-WidgetUpdater
+if($SkinManaged){Initialize-SkinManagedRuntime}else{Initialize-WidgetUpdater}
 Initialize-WidgetSettingsMenu
 $script:ui.Refresh.Add_Click({param($sender,$event)Request-Refresh;Restart-SceneTtl;$script:ui.Status.Text='正在刷新额度…';$event.Handled=$true})
 $script:ui.MenuButton.Add_Click({Open-WidgetMenu})
@@ -943,6 +959,7 @@ function Ensure-QuotaWorker([long]$now){
 }
 function Stop-WidgetRuntime {
   if($script:runtimeClosed){return};$script:runtimeClosed=$true
+  if($SkinManaged){try{Stop-SkinManagedRuntime}catch{}}
   try{if($script:occlusionRecovery){$script:occlusionRecovery.Dispose()}}catch{}
   try{Stop-WidgetMusic}catch{}
   try{if($script:hostFollower){$script:hostFollower.Dispose()}}catch{}
@@ -969,12 +986,12 @@ function Tick-Widget {
   try{
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   Tick-Scene $now
-  Tick-WidgetUpdater $now
-  if($now-$script:lastPresence-ge 1000 -and (Test-Path -LiteralPath (Join-Path $script:dataDir 'stop.flag'))){$script:window.Close();return}
-  Ensure-QuotaWorker $now
+  if($SkinManaged){Tick-SkinManaged;if($script:runtimeClosed){return}}else{Tick-WidgetUpdater $now}
+  if(!$SkinManaged -and $now-$script:lastPresence-ge 1000 -and (Test-Path -LiteralPath (Join-Path $script:dataDir 'stop.flag'))){$script:window.Close();return}
+  if(!$SkinManaged){Ensure-QuotaWorker $now}
   if($script:completionTemporary){
     if($script:occlusionRecovery){$script:occlusionRecovery.Configure([IntPtr]::Zero,$false)}
-    if($now-$script:lastPresence-ge 1000){Write-WidgetPresence $true $now;$script:lastPresence=$now;Update-Quota;Read-DisplayRequest;Tick-CompletionNotifications $true}
+    if($now-$script:lastPresence-ge 1000){if(!$SkinManaged){Write-WidgetPresence $true $now;Read-DisplayRequest};$script:lastPresence=$now;Update-Quota;Tick-CompletionNotifications $true}
     return
   }
   $foreground=[GptWidgetNative]::GetAncestor([GptWidgetNative]::GetForegroundWindow(),2)
@@ -1072,10 +1089,11 @@ function Tick-Widget {
   if($script:occlusionRecovery){$script:occlusionRecovery.Configure($script:hostHandle,[bool]$recoverAllowed)}
   if($now-$script:lastPresence-ge 1000){
     Update-WidgetMusicVisibility ([bool]$visible) ([bool]($script:completionTemporary -or $script:settingsSizePreview -or ($script:characterGallery -and $script:characterGallery.IsVisible) -or ($script:quoteEditor -and $script:quoteEditor.IsVisible)))
-    Write-WidgetPresence ([bool]$visible) $now
+    if(!$SkinManaged){Write-WidgetPresence ([bool]$visible) $now}
     Update-Quota;$script:lastPresence=$now
-    Read-DisplayRequest
+    if(!$SkinManaged){Read-DisplayRequest}
     Tick-CompletionNotifications ([bool]$visible)
+    if($SkinManaged){Tick-SkinReminder}
     Tick-WidgetAutoQuote $now ([bool]$visible)
   }
   }finally{$script:updating=$false}
@@ -1112,10 +1130,10 @@ try{
   # user's original file is the only remaining copy.
   if(!$script:settingsLoadFailed){Save-Settings}
   Start-CompletionMonitor
-  Ensure-QuotaWorker ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+  if(!$SkinManaged){Ensure-QuotaWorker ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())}
   $widgetProcess=Get-Process -Id $PID
   try{$processStartedAt=$widgetProcess.StartTime.ToUniversalTime().ToString('o')}finally{$widgetProcess.Dispose()}
-  Write-WidgetJson (Join-Path $script:dataDir 'runtime.json') @{pid=$PID;widget=$script:widgetHandle.ToInt64();startedAt=[DateTime]::UtcNow.ToString('o');processStartedAt=$processStartedAt;eventHooks=@($script:eventHooks|ForEach-Object{$_.ToInt64()});fallbackIntervalMs=1000;movementMode='native-immediate'}
+  if(!$SkinManaged){Write-WidgetJson (Join-Path $script:dataDir 'runtime.json') @{pid=$PID;widget=$script:widgetHandle.ToInt64();startedAt=[DateTime]::UtcNow.ToString('o');processStartedAt=$processStartedAt;eventHooks=@($script:eventHooks|ForEach-Object{$_.ToInt64()});fallbackIntervalMs=1000;movementMode='native-immediate'}}
   $script:timer.Start();Tick-Widget
   [Windows.Threading.Dispatcher]::Run()
 }catch{

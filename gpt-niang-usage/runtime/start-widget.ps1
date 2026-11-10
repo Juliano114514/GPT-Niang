@@ -1,9 +1,12 @@
 param(
   [string]$WidgetPath=(Join-Path (Split-Path $PSScriptRoot -Parent) 'widget.ps1'),
   [switch]$CheckOnly,
-  [switch]$Preview
+  [switch]$Preview,
+  [switch]$SkinManaged,
+  [string]$DataDir,
+  [string]$NodePath
 )
 $ErrorActionPreference='Stop'
 $widgetFile=[IO.Path]::GetFullPath($WidgetPath)
 $source=[IO.File]::ReadAllText($widgetFile,[Text.Encoding]::UTF8)
-& ([scriptblock]::Create($source)) -AppDir ([IO.Path]::GetDirectoryName($widgetFile)) -CheckOnly:$CheckOnly -Preview:$Preview
+& ([scriptblock]::Create($source)) -AppDir ([IO.Path]::GetDirectoryName($widgetFile)) -CheckOnly:$CheckOnly -Preview:$Preview -SkinManaged:$SkinManaged -DataDir $DataDir -NodePath $NodePath
