@@ -2,6 +2,7 @@
 $script:widgetQuotesBuiltInPath=Join-Path $PSScriptRoot '..\assets\quotes.json'
 $script:widgetQuoteRandom=New-Object System.Random
 $script:widgetQuoteLastByDataDir=@{}
+$script:widgetQuoteFileCache=@{}
 
 function ConvertTo-WidgetQuoteRows($Value) {
   if($null-eq $Value){return}
@@ -29,12 +30,17 @@ function ConvertTo-WidgetQuoteRows($Value) {
 }
 
 function Read-WidgetQuoteFile([string]$Path) {
-  # Bound the parse cost: the editor can write a large text dump, and this
-  # file is re-read whenever a quote is displayed.
-  if(([IO.FileInfo]::new($Path)).Length-gt 1MB){throw '语录文件超过 1 MB，请精简后重试。'}
+  # Revalidate metadata on each selection, but parse unchanged pools only once.
+  $file=[IO.FileInfo]::new($Path)
+  if($file.Length-gt 1MB){throw '语录文件超过 1 MB，请精简后重试。'}
+  $key=$file.FullName;$stamp=$file.LastWriteTimeUtc.Ticks.ToString()+'|'+$file.Length
+  $cached=$script:widgetQuoteFileCache[$key]
+  if($cached -and $cached.stamp-eq $stamp){return $cached.rows}
   $json=[IO.File]::ReadAllText($Path,[Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop
   $rows=@(ConvertTo-WidgetQuoteRows $json)
   if($rows.Count-gt 5000){throw '语录条数超过 5000，请精简后重试。'}
+  if($script:widgetQuoteFileCache.Count-ge 8){$script:widgetQuoteFileCache.Clear()}
+  $script:widgetQuoteFileCache[$key]=@{stamp=$stamp;rows=$rows}
   $rows
 }
 
@@ -76,6 +82,7 @@ function Save-WidgetQuotes([string]$DataDir,$Quotes) {
   if($rows.Count-eq 0){throw '请至少填写一条有效语录；每条最多 200 字，权重须大于 0 且不超过 1000。'}
   $null=[IO.Directory]::CreateDirectory($DataDir)
   $file=Join-Path $DataDir 'quotes.json'
+  $script:widgetQuoteFileCache.Remove([IO.Path]::GetFullPath($file))
   $temp=$file+'.'+$PID+'.tmp'
   try{
     $json=@{version=1;quotes=@($rows)} | ConvertTo-Json -Depth 5
@@ -87,6 +94,7 @@ function Save-WidgetQuotes([string]$DataDir,$Quotes) {
 
 function Reset-WidgetQuotes([string]$DataDir) {
   $file=Join-Path $DataDir 'quotes.json'
+  $script:widgetQuoteFileCache.Remove([IO.Path]::GetFullPath($file))
   if([IO.File]::Exists($file)){
     [IO.File]::Copy($file,($file+'.bak'),$true)
     [IO.File]::Delete($file)

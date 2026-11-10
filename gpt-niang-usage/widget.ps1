@@ -267,12 +267,18 @@ function Set-WidgetIndependentLayout {
       [Windows.Controls.Canvas]::SetLeft($script:ui.WaterBubble,[Math]::Max(0,[Math]::Min(350-174*$bubble,$girlLeft-96*$bubble)))
       [Windows.Controls.Canvas]::SetTop($script:ui.WaterBubble,[Math]::Max(0,[Math]::Min(350-88*$bubble,$girlTop-8*$bubble)))
     }
-    $script:ui.Tail.Width=25*$character;$script:ui.Tail.Height=18*$character
-    [Windows.Controls.Canvas]::SetLeft($script:ui.Tail,$girlLeft-34*$character)
-    [Windows.Controls.Canvas]::SetTop($script:ui.Tail,$girlTop+40*$character)
-    $script:ui.TailNear.Width=17*$character;$script:ui.TailNear.Height=12*$character
-    [Windows.Controls.Canvas]::SetLeft($script:ui.TailNear,$girlLeft)
-    [Windows.Controls.Canvas]::SetTop($script:ui.TailNear,$girlTop+72*$character)
+    # All three thought bubbles use the bubble size. Connect the actual tail
+    # of the large shape to the character after independent size/clamp changes.
+    $tailX=$bubbleLeft+178*$bubble;$tailY=$bubbleTop+168*$bubble
+    $nearX=$girlLeft+8.5*$character;$nearY=$girlTop+78*$character
+    $script:ui.Tail.Width=25*$bubble;$script:ui.Tail.Height=18*$bubble
+    $script:ui.Tail.StrokeThickness=4*$bubble
+    [Windows.Controls.Canvas]::SetLeft($script:ui.Tail,($tailX+$nearX)/2-12.5*$bubble)
+    [Windows.Controls.Canvas]::SetTop($script:ui.Tail,($tailY+$nearY)/2-9*$bubble)
+    $script:ui.TailNear.Width=17*$bubble;$script:ui.TailNear.Height=12*$bubble
+    $script:ui.TailNear.StrokeThickness=4*$bubble
+    [Windows.Controls.Canvas]::SetLeft($script:ui.TailNear,$nearX-8.5*$bubble)
+    [Windows.Controls.Canvas]::SetTop($script:ui.TailNear,$nearY-6*$bubble)
     $script:ui.MenuButton.Width=24*$character;$script:ui.MenuButton.Height=24*$character
     if($script:ui.MenuButton.Content-is [Windows.Controls.Viewbox]){
       $script:ui.MenuButton.Content.Width=14*$character;$script:ui.MenuButton.Content.Height=14*$character
@@ -494,6 +500,7 @@ function Apply-Scene {
   Set-WidgetSceneLayout
   if($script:widgetColors){Update-WidgetColorScene}
   $quota=$script:bubbleMode-eq 'quota'
+  if($SkinManaged -and $quota){Update-Quota}
   $script:ui.QuotaText.Visibility=if($quota){[Windows.Visibility]::Visible}else{[Windows.Visibility]::Collapsed}
   $workday=$SkinManaged -and $script:bubbleMode-eq 'workday'
   if($workday){Update-SkinWorkday}
@@ -547,21 +554,21 @@ function Switch-Scene([string]$mode){
   $script:sceneRevision++;$script:bubbleMode=$mode
   if($mode-eq 'quote'){$script:ui.QuoteText.Text=Get-WidgetBubbleQuote $script:dataDir;Fit-QuoteText}
   if($script:sceneTimer){$script:sceneTimer.Stop()}
-  Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 0 120
+  Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 0 70
   $script:sceneTimer=New-Object Windows.Threading.DispatcherTimer
-  $script:sceneTimer.Interval=[TimeSpan]::FromMilliseconds(120)
+  $script:sceneTimer.Interval=[TimeSpan]::FromMilliseconds(70)
   $script:sceneTimer.Add_Tick({param($timer,$event)
     $timer.Stop()
     try{
       if($timer-eq $script:sceneTimer -and !$script:collapsed){
-        Apply-Scene;Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 1 160
-        Restart-SceneTtl 160
+        Apply-Scene;Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 1 110
+        Restart-SceneTtl 110
       }
     }catch{
       try{[IO.File]::WriteAllText((Join-Path $script:dataDir 'display-error.txt'),$_.Exception.Message,[Text.UTF8Encoding]::new($false))}catch{}
     }
   })
-  $script:sceneTimer.Start();Restart-SceneTtl 280
+  $script:sceneTimer.Start();Restart-SceneTtl 180
 }
 function Next-Bubble {
   if($script:collapsed){return}
@@ -610,19 +617,19 @@ function Open-WidgetBubble([ValidateSet('quota','quote','completion','workday','
   Apply-Scene
   if($script:sceneTimer){$script:sceneTimer.Stop()}
   if($script:closeTimer){$script:closeTimer.Stop();$script:closeTimer=$null}
-  foreach($stage in @(@{name='TailNear';delay=0},@{name='Tail';delay=130},@{name='Bubble';delay=260})){
+  foreach($stage in @(@{name='TailNear';delay=0},@{name='Tail';delay=45},@{name='Bubble';delay=90})){
     $element=$script:ui[$stage.name];$element.Visibility=[Windows.Visibility]::Visible
     Set-AnimatedValue $element ([Windows.UIElement]::OpacityProperty) 0
     Set-AnimatedValue $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleXProperty) 0.7
     Set-AnimatedValue $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleYProperty) 0.7
-    Animate-Value $element ([Windows.UIElement]::OpacityProperty) 1 200 $stage.delay
-    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleXProperty) 1 200 $stage.delay
-    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleYProperty) 1 200 $stage.delay
+    Animate-Value $element ([Windows.UIElement]::OpacityProperty) 1 160 $stage.delay
+    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleXProperty) 1 160 $stage.delay
+    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleYProperty) 1 160 $stage.delay
   }
   Set-AnimatedValue $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 0
-  Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 1 160 360
+  Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 1 110 140
   $script:ui.Bubble.IsHitTestVisible=$true
-  Restart-SceneTtl 520;Save-Settings
+  Restart-SceneTtl 250;Save-Settings
 }
 function Hide-Quota([switch]$KeepCompletion) {
   if($script:collapsed){return}
@@ -635,16 +642,16 @@ function Hide-Quota([switch]$KeepCompletion) {
   if($script:resetPhaseTimer){$script:resetPhaseTimer.Stop();$script:resetPhaseTimer=$null}
   if($script:sceneTimer){$script:sceneTimer.Stop()}
   $script:ui.Bubble.IsHitTestVisible=$false
-  Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 0 160
-  foreach($stage in @(@{name='Bubble';delay=100},@{name='Tail';delay=200},@{name='TailNear';delay=300})){
+  Animate-Value $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 0 100
+  foreach($stage in @(@{name='Bubble';delay=0},@{name='Tail';delay=45},@{name='TailNear';delay=90})){
     $element=$script:ui[$stage.name]
-    Animate-Value $element ([Windows.UIElement]::OpacityProperty) 0 180 $stage.delay
-    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleXProperty) 0.7 180 $stage.delay
-    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleYProperty) 0.7 180 $stage.delay
+    Animate-Value $element ([Windows.UIElement]::OpacityProperty) 0 130 $stage.delay
+    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleXProperty) 0.7 130 $stage.delay
+    Animate-Value $element.RenderTransform ([Windows.Media.ScaleTransform]::ScaleYProperty) 0.7 130 $stage.delay
   }
   if($script:closeTimer){$script:closeTimer.Stop()}
   $script:closeTimer=New-Object Windows.Threading.DispatcherTimer
-  $script:closeTimer.Interval=[TimeSpan]::FromMilliseconds(510)
+  $script:closeTimer.Interval=[TimeSpan]::FromMilliseconds(230)
   $script:closeTimer.Add_Tick({param($timer,$event)
     $timer.Stop()
     if($script:collapsed -and $timer-eq $script:closeTimer){Set-BubbleState}
@@ -738,6 +745,9 @@ function Set-ResetTimeMode([string]$mode,[long]$nowMilliseconds){
   }
 }
 function Update-Quota {
+  # Shared snapshots retain the data while the quota scene is not displayed.
+  # Rebuild its text/brushes on entry instead of repainting invisible controls.
+  if($SkinManaged -and ($script:skinHidden -or $script:collapsed -or $script:bubbleMode-ne 'quota')){return}
   if(!$SkinManaged){
   $file=Join-Path $script:dataDir 'status.json'
   try{$stamp=[IO.File]::GetLastWriteTimeUtc($file).Ticks

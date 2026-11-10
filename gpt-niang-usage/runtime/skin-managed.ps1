@@ -8,10 +8,24 @@ using System;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Windows.Threading;
 public static class GptSkinPipe {
   static readonly ConcurrentQueue<string> Lines = new ConcurrentQueue<string>();
+  static Dispatcher dispatcher;
+  static Action receive;
+  static int wakePending;
   public static volatile bool Closed;
-  public static void Start() {
+  static void Wake() {
+    if (dispatcher.HasShutdownStarted || Interlocked.Exchange(ref wakePending, 1) != 0) return;
+    try {
+      dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => {
+        Interlocked.Exchange(ref wakePending, 0);
+        receive();
+      }));
+    } catch { Interlocked.Exchange(ref wakePending, 0); }
+  }
+  public static void Start(Dispatcher ui, Action onMessage) {
+    dispatcher = ui; receive = onMessage;
     Console.InputEncoding = new System.Text.UTF8Encoding(false);
     Console.OutputEncoding = new System.Text.UTF8Encoding(false);
     var thread = new Thread(() => {
@@ -21,8 +35,9 @@ public static class GptSkinPipe {
           if (line.Length > 65536) { Closed = true; return; }
           if (Lines.Count >= 64) { string ignored; Lines.TryDequeue(out ignored); }
           Lines.Enqueue(line);
+          Wake();
         }
-      } catch {} finally { Closed = true; }
+      } catch {} finally { Closed = true; Wake(); }
     });
     thread.IsBackground = true;
     thread.Start();
@@ -55,7 +70,7 @@ public static class GptSkinNotification {
   }
   public static void Hide() { if(current.hWnd!=IntPtr.Zero) { Shell_NotifyIcon(2,ref current); current.hWnd=IntPtr.Zero; } }
 }
-'@
+'@ -ReferencedAssemblies 'System',([Windows.Threading.Dispatcher].Assembly.Location)
 }
 
 function Send-SkinAction([string]$Action,$Parameters=@{}) {
@@ -91,7 +106,9 @@ function Initialize-SkinManagedRuntime {
     $script:skinReminderDown=!$script:skinReminderDown
     Animate-Press $script:skinReminderDown
   })
-  [GptSkinPipe]::Start()
+  [GptSkinPipe]::Start($script:window.Dispatcher,[Action]{
+    try{Tick-Widget}catch{$script:ui.Status.Text='共享状态暂不可用'}
+  })
   Send-SkinAction 'ready' @{completionEnabled=[bool]$script:completionNotificationsEnabled}
 }
 
@@ -160,20 +177,26 @@ function Update-SkinWorkday {
   Update-SkinWaterBubble
 }
 
+function Receive-SkinSnapshot($Snapshot) {
+  $script:skinSnapshot=$Snapshot;$script:status=$Snapshot.quota
+  if($script:skinHidden-eq [bool]$Snapshot.enabled){Set-SkinWidgetVisibility ([bool]$Snapshot.enabled)}
+  if(!$script:skinHidden){Update-SkinWorkday}
+  Update-Quota
+}
+
 function Tick-SkinManaged {
   if([GptSkinPipe]::Closed){$script:skinOwnerClosed=$true;$script:window.Close();return}
   $line=$null
+  $pendingSnapshot=$null
   for($index=0;$index-lt 64 -and [GptSkinPipe]::TryRead([ref]$line);$index++){
     try {
       $message=$line|ConvertFrom-Json
       if($message.v-ne 1){continue}
+      # Collapse adjacent snapshots while retaining ordering around reminders
+      # and completions. A burst should paint its latest state only once.
+      if($message.type-eq 'snapshot'){$pendingSnapshot=$message;continue}
+      if($pendingSnapshot){Receive-SkinSnapshot $pendingSnapshot;$pendingSnapshot=$null}
       switch([string]$message.type){
-        'snapshot' {
-          $script:skinSnapshot=$message;$script:status=$message.quota
-          if($script:skinHidden-eq [bool]$message.enabled){Set-SkinWidgetVisibility ([bool]$message.enabled)}
-          Update-SkinWorkday
-          Update-Quota
-        }
         'completion' {Receive-CompletionMonitorLine ($message.event|ConvertTo-Json -Compress)}
         'reminder' {
           if($message.id-isnot [string] -or $message.title-isnot [string] -or $message.message-isnot [string]){continue}
@@ -188,8 +211,9 @@ function Tick-SkinManaged {
     }catch{$script:ui.Status.Text='共享状态暂不可用'}
     $line=$null
   }
+  if($pendingSnapshot){try{Receive-SkinSnapshot $pendingSnapshot}catch{$script:ui.Status.Text='共享状态暂不可用'}}
   $second=[long][Math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000)
-  if($second-ne $script:skinWorkdaySecond){$script:skinWorkdaySecond=$second;Update-SkinWorkday}
+  if(!$script:skinHidden -and $second-ne $script:skinWorkdaySecond){$script:skinWorkdaySecond=$second;Update-SkinWorkday}
 }
 
 function Tick-SkinReminder {
