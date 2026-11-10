@@ -201,7 +201,16 @@ function Set-WidgetCharacter([string]$Id,[switch]$NoSave) {
 try{$null=Set-WidgetCharacter $script:characterId -NoSave}
 catch{$script:characterLoadNotice='上次使用的图片无法读取，已恢复龙娘1。';$null=Set-WidgetCharacter 'gpt-dragon' -NoSave}
 function Get-WidgetPlacementFrame {
-  if($script:followHost){return [GptWidgetNative]::Frame($script:hostHandle)}
+  if($script:followHost){
+    if(!$script:hostHandle -or $script:hostHandle-eq [IntPtr]::Zero){return $null}
+    $frame=[GptWidgetNative]::Frame($script:hostHandle)
+    if($SkinManaged){
+      $screen=[Windows.Forms.Screen]::FromHandle($script:hostHandle).WorkingArea
+      $frame.Left=[Math]::Max($frame.Left,$screen.Left);$frame.Top=[Math]::Max($frame.Top,$screen.Top)
+      $frame.Right=[Math]::Min($frame.Right,$screen.Right);$frame.Bottom=[Math]::Min($frame.Bottom,$screen.Bottom)
+    }
+    return $frame
+  }
   $point=if($null-ne $script:desktopLeft -and $null-ne $script:desktopTop){[Drawing.Point]::new([int]$script:desktopLeft,[int]$script:desktopTop)}else{[Drawing.Point]::new(0,0)}
   return [Windows.Forms.Screen]::FromPoint($point).WorkingArea
 }
@@ -225,6 +234,7 @@ function Set-WidgetFollowHost([bool]$Follow) {
 function Set-Facing {
   $factor=if($script:side-eq 'left'){-1.0}else{1.0}
   $script:ui.FacingScale.ScaleX=$factor;$script:ui.TextFacingScale.ScaleX=$factor
+  if($script:ui.WaterTextFacingScale){$script:ui.WaterTextFacingScale.ScaleX=$factor}
   # Refresh now shares SceneText's mirror compensation with the title.
   $script:ui.Refresh.RenderTransform=[Windows.Media.Transform]::Identity
   $script:ui.MenuButton.RenderTransformOrigin=[Windows.Point]::new(0.5,0.5)
@@ -251,6 +261,12 @@ function Set-WidgetIndependentLayout {
     # window clips its bottom edge for small characters with bubble scale 250%.
     $bubbleTop=[Math]::Max(0,[Math]::Min(350-239*$bubble,$girlTop-142*$bubble))
     [Windows.Controls.Canvas]::SetTop($script:ui.Bubble,$bubbleTop)
+    if($script:ui.WaterBubble){
+      $script:ui.WaterBubble.LayoutTransform=[Windows.Media.ScaleTransform]::new($bubble,$bubble)
+      # Keep the compact bubble beside the head, near the large bubble's tail.
+      [Windows.Controls.Canvas]::SetLeft($script:ui.WaterBubble,[Math]::Max(0,[Math]::Min(350-174*$bubble,$girlLeft-96*$bubble)))
+      [Windows.Controls.Canvas]::SetTop($script:ui.WaterBubble,[Math]::Max(0,[Math]::Min(350-88*$bubble,$girlTop-8*$bubble)))
+    }
     $script:ui.Tail.Width=25*$character;$script:ui.Tail.Height=18*$character
     [Windows.Controls.Canvas]::SetLeft($script:ui.Tail,$girlLeft-34*$character)
     [Windows.Controls.Canvas]::SetTop($script:ui.Tail,$girlTop+40*$character)
@@ -270,7 +286,7 @@ function Set-WidgetIndependentLayout {
 function Set-Appearance {
   $previousDisplayScale=$script:displayScale
   $actual=Get-WidgetLayoutScale
-  if(!$script:followHost){
+  if(!$script:followHost -or $SkinManaged){
     $frame=Get-WidgetPlacementFrame;$dpi=Get-WidgetPlacementDpi
     if(Test-WidgetPlacementFrame $frame $dpi){$actual=[Math]::Min($actual,[Math]::Min(($frame.Right-$frame.Left)/$dpi/$script:designWidth,($frame.Bottom-$frame.Top)/$dpi/$script:designHeight))}
   }
@@ -303,6 +319,7 @@ function Test-WidgetDesktopCoordinates {
   return ($null-ne [Windows.PresentationSource]::FromVisual($script:window) -and $null-ne [Windows.PresentationSource]::FromVisual($script:ui.Root.Parent))
 }
 function Limit-WidgetHorizontalPosition($Frame,[double]$Dpi,[double]$Left) {
+  if($SkinManaged){return [int][Math]::Round([Math]::Max($Frame.Left,[Math]::Min($Frame.Right-$script:designWidth*$script:displayScale*$Dpi,$Left)))}
   # Mirror-aware character bounds; transparent bubble space may extend outside.
   # Use the resting layout so press/rebound never changes the drag limits.
   $root=$script:ui.Root;$girl=$script:ui.Girl
@@ -320,6 +337,7 @@ function Limit-WidgetHorizontalPosition($Frame,[double]$Dpi,[double]$Left) {
   return [int][Math]::Round([Math]::Max($minimum,[Math]::Min($maximum,$Left)))
 }
 function Limit-WidgetVerticalPosition($Frame,[double]$Dpi,[double]$Top) {
+  if($SkinManaged){return [int][Math]::Round([Math]::Max($Frame.Top,[Math]::Min($Frame.Bottom-$script:designHeight*$script:displayScale*$Dpi,$Top)))}
   # Keep the character inside the frame; the transparent space reserved for
   # its bubble may extend above it. Ignore transient press/rebound transforms.
   $root=$script:ui.Root;$girl=$script:ui.Girl
@@ -334,6 +352,7 @@ function Limit-WidgetVerticalPosition($Frame,[double]$Dpi,[double]$Top) {
   return [int][Math]::Round([Math]::Max($minimum,[Math]::Min($maximum,$Top)))
 }
 function Get-WidgetCharacterPixelBounds([double]$Dpi) {
+  if($SkinManaged){return [int[]]@(0,0,($script:designWidth*$script:displayScale*$Dpi),($script:designHeight*$script:displayScale*$Dpi))}
   # Resting character bounds, excluding transparent bubble/animation padding.
   $root=$script:ui.Root;$girl=$script:ui.Girl
   $source=[Windows.PresentationSource]::FromVisual($script:window)
@@ -412,6 +431,7 @@ function Set-BubbleState {
   }
   Set-AnimatedValue $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 1
   $script:ui.Bubble.IsHitTestVisible=!$script:collapsed
+  if($SkinManaged){Update-SkinWaterBubble}
 }
 $script:bubbleEpoch=0;$script:closeTimer=$null
 function Restart-SceneTtl([int]$renderDelay=0,[long]$now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()){
@@ -476,13 +496,14 @@ function Apply-Scene {
   $quota=$script:bubbleMode-eq 'quota'
   $script:ui.QuotaText.Visibility=if($quota){[Windows.Visibility]::Visible}else{[Windows.Visibility]::Collapsed}
   $workday=$SkinManaged -and $script:bubbleMode-eq 'workday'
+  if($workday){Update-SkinWorkday}
   $script:ui.QuoteText.Visibility=if($quota -or $workday){[Windows.Visibility]::Collapsed}else{[Windows.Visibility]::Visible}
   if($SkinManaged -and $script:ui.WorkdaySurface){$script:ui.WorkdaySurface.Visibility=if($workday){[Windows.Visibility]::Visible}else{[Windows.Visibility]::Collapsed}}
   $script:ui.Refresh.Visibility=$script:ui.QuotaText.Visibility;$script:ui.LiveDot.Visibility=[Windows.Visibility]::Collapsed
   Update-BubbleTooltip
 }
 function Update-BubbleTooltip {
-  $copy=if($script:bubbleMode-in @('quote','completion','reminder')){$script:ui.QuoteText.Tag}elseif($script:bubbleMode-eq 'workday'){'计时与皮肤详细信息同步；点击齿轮编辑工资与打卡设置。'}else{
+  $copy=if($script:bubbleMode-in @('quote','completion','reminder')){$script:ui.QuoteText.Tag}elseif($script:bubbleMode-eq 'workday'){'点击下班结束计时；点击喝水重新倒计时。设置可在皮肤详细信息中调整。'}else{
     $parts=@()
     if($script:status.planLabel){$parts+='当前套餐：'+$script:status.planLabel}
     foreach($row in (Get-QuotaRows)){
@@ -520,6 +541,7 @@ function Update-BubbleTooltip {
 
 function Switch-Scene([string]$mode){
   if($script:collapsed){return}
+  if($SkinManaged){Stop-SkinReminderAnimation}
   if($script:bubbleMode-eq 'completion' -and $mode-ne 'completion'){Dismiss-CompletionNotification}
   Reset-WidgetAutoQuoteSchedule
   $script:sceneRevision++;$script:bubbleMode=$mode
@@ -543,9 +565,16 @@ function Switch-Scene([string]$mode){
 }
 function Next-Bubble {
   if($script:collapsed){return}
-  if($script:bubbleMode-eq 'quota'){Switch-Scene 'quote'}else{Hide-Quota}
+  if($SkinManaged -and $script:bubbleMode-eq 'workday'){Switch-Scene 'quota'}
+  elseif($script:bubbleMode-eq 'quota'){Switch-Scene 'quote'}else{Hide-Quota}
 }
 function Click-Character {
+  if($SkinManaged){
+    if($script:collapsed){Open-WidgetBubble 'workday'}
+    elseif($script:bubbleMode-eq 'reminder'){Switch-Scene 'workday'}
+    else{Next-Bubble}
+    return
+  }
   if($script:collapsed){Show-Quota}
   elseif($script:bubbleTapAdvance){Next-Bubble}
   elseif($script:bubbleMode-ne 'quota'){Switch-Scene 'quota'}
@@ -574,6 +603,7 @@ function Open-WidgetBubble([ValidateSet('quota','quote','completion','workday','
   Reset-WidgetAutoQuoteSchedule
   if(!$script:collapsed){if($Mode-eq 'quote' -or $script:bubbleMode-ne $Mode){Switch-Scene $Mode}else{Restart-SceneTtl};return}
   $script:bubbleEpoch++;$script:collapsed=$false;$script:sceneRevision++
+  if($SkinManaged){Update-SkinWaterBubble}
   $script:bubbleMode=$Mode
   if($Mode-eq 'quote'){$script:ui.QuoteText.Text=Get-WidgetBubbleQuote $script:dataDir;Fit-QuoteText}
   if($Mode-eq 'completion'){$script:ui.QuoteText.Text="Codex`n有回复已结束";Fit-QuoteText}
@@ -596,6 +626,7 @@ function Open-WidgetBubble([ValidateSet('quota','quote','completion','workday','
 }
 function Hide-Quota([switch]$KeepCompletion) {
   if($script:collapsed){return}
+  if($SkinManaged){Stop-SkinReminderAnimation}
   if($script:bubbleMode-eq 'completion' -and !$KeepCompletion){Dismiss-CompletionNotification}
   Reset-WidgetAutoQuoteSchedule
   $script:collapsed=$true;$script:bubbleEpoch++
@@ -630,7 +661,7 @@ function Request-Refresh {
   [IO.File]::WriteAllText((Join-Path $script:dataDir 'refresh.flag'),([DateTime]::UtcNow.ToString('o')+' '+[Guid]::NewGuid().ToString('N')))
 }
 function Exit-WidgetForSession {
-  if($SkinManaged){Send-SkinAction 'enable' @{enabled=$false};$script:window.Close();return}
+  if($SkinManaged){Hide-SkinWidget;return}
   if($script:followHost){Set-WidgetSupervisorPause -AppDir $script:appDir -HostHandle $script:hostHandle.ToInt64() -HostPid ([GptWidgetNative]::ProcessId($script:hostHandle))}
   else{Write-WidgetSupervisorJson (Join-Path $script:dataDir 'supervisor-pause.json') @{desktop=$true;at=[DateTime]::UtcNow.ToString('o')}}
   $script:window.Close()
@@ -832,6 +863,7 @@ foreach($control in @($script:ui.Girl,$script:ui.MenuButton)){
 $script:context.Add_Closed({$script:menuTimer.Start()})
 foreach($control in @($script:ui.Bubble,$script:ui.Tail,$script:ui.TailNear)){$control.Add_MouseLeftButtonUp({param($sender,$event)Next-Bubble;$event.Handled=$true})}
 $pressDown={param($sender,$event)
+  if($SkinManaged){Stop-SkinReminderAnimation}
   Pause-CompletionNotification
   Reset-WidgetAutoQuoteSchedule
   $cursor=New-Object GptWidgetNative+Point;[GptWidgetNative]::GetCursorPos([ref]$cursor)|Out-Null
@@ -987,6 +1019,7 @@ function Tick-Widget {
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   Tick-Scene $now
   if($SkinManaged){Tick-SkinManaged;if($script:runtimeClosed){return}}else{Tick-WidgetUpdater $now}
+  if($SkinManaged -and $script:skinHidden){return}
   if(!$SkinManaged -and $now-$script:lastPresence-ge 1000 -and (Test-Path -LiteralPath (Join-Path $script:dataDir 'stop.flag'))){$script:window.Close();return}
   if(!$SkinManaged){Ensure-QuotaWorker $now}
   if($script:completionTemporary){
@@ -1019,7 +1052,7 @@ function Tick-Widget {
       $frame=$placementFrame;$dpi=$placementDpi
       if($dpi-le 0){$dpi=1}
       $fitted=Get-WidgetLayoutScale
-      if(!$script:followHost){$fitted=[Math]::Min($fitted,[Math]::Min(($frame.Right-$frame.Left)/$dpi/$script:designWidth,($frame.Bottom-$frame.Top)/$dpi/$script:designHeight))}
+      if(!$script:followHost -or $SkinManaged){$fitted=[Math]::Min($fitted,[Math]::Min(($frame.Right-$frame.Left)/$dpi/$script:designWidth,($frame.Bottom-$frame.Top)/$dpi/$script:designHeight))}
       if([Math]::Abs($script:displayScale-$fitted)-gt 0.001){Set-Appearance}
       $null=Set-WidgetPixelSize $dpi
       $w=[int]($script:designWidth*$script:displayScale*$dpi);$h=[int]($script:designHeight*$script:displayScale*$dpi)

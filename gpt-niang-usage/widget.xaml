@@ -66,19 +66,22 @@
         <TextBlock x:Name="Status" Visibility="Collapsed" Text="正在读取额度…"/>
       </StackPanel>
         <TextBlock x:Name="QuoteText" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" FontSize="20" FontWeight="Bold" LineHeight="25" Foreground="#745A98" IsHitTestVisible="False" Text="我在这儿，慢慢来就好。"/>
-        <Border x:Name="WorkdaySurface" Visibility="Collapsed" CornerRadius="6" Padding="3,1">
-          <StackPanel x:Name="WorkdayText" VerticalAlignment="Center" TextElement.Foreground="#443552">
-            <TextBlock Text="上班状态 · 与皮肤同步" FontSize="11" HorizontalAlignment="Center"/>
-            <TextBlock x:Name="WorkdayCountdown" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
-            <TextBlock x:Name="WorkdayWater" FontSize="13" HorizontalAlignment="Center"/>
-            <TextBlock x:Name="WorkdayIncome" FontSize="11" HorizontalAlignment="Center"/>
-            <TextBlock x:Name="WorkdayUsage" FontSize="10" HorizontalAlignment="Center"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,2,0,0">
-              <Button x:Name="WorkdayPrimary" Content="上班" FontSize="11" Width="40"/>
-              <Button x:Name="WorkdayDrink" Content="我已喝水" FontSize="11" Width="72"/>
-              <Button x:Name="WorkdaySettings" Content="⚙" FontSize="13" Width="25" ToolTip="打开皮肤的工资与打卡设置"/>
-            </StackPanel>
-          </StackPanel>
+        <Border x:Name="WorkdaySurface" Visibility="Collapsed" VerticalAlignment="Center" Padding="4,0">
+          <Grid x:Name="WorkdayText" TextElement.Foreground="#745A98">
+            <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="28"/><RowDefinition Height="29"/></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="WorkdayPhase" Text="下班" FontSize="12" Foreground="#7D6B91" VerticalAlignment="Center"/>
+            <TextBlock x:Name="WorkdayCountdown" Grid.Column="1" Text="—" FontFamily="Segoe UI" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            <TextBlock Grid.Row="1" Text="喝水" FontSize="12" Foreground="#7D6B91" VerticalAlignment="Center"/>
+            <TextBlock x:Name="WorkdayWater" Grid.Row="1" Grid.Column="1" FontFamily="Segoe UI" FontSize="21" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            <Border Grid.Row="2" Grid.ColumnSpan="2" BorderBrush="#EAE4F3" BorderThickness="0,1,0,0" Margin="0,4,0,0">
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom">
+                <Button x:Name="WorkdayPrimary" Content="上班" FontSize="12" Padding="8,1" MinWidth="48" ToolTip="开始或结束本次上班计时"/>
+                <TextBlock Text="·" FontSize="12" Foreground="#C3B3D6" Margin="6,0" VerticalAlignment="Center"/>
+                <Button x:Name="WorkdayDrink" Content="喝水" FontSize="12" Padding="8,1" MinWidth="48" ToolTip="我已喝水，重新开始倒计时"/>
+              </StackPanel>
+            </Border>
+          </Grid>
         </Border>
       </Grid>
     <Ellipse x:Name="LiveDot" Visibility="Collapsed" Canvas.Left="134" Canvas.Top="17" Width="4" Height="4" Fill="#9B86C1" IsHitTestVisible="False"/>
@@ -89,6 +92,16 @@
     <Ellipse x:Name="TailNear" Canvas.Left="142" Canvas.Top="214" Width="17" Height="12" Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="4" RenderTransformOrigin="0.5,0.5">
       <Ellipse.RenderTransform><ScaleTransform/></Ellipse.RenderTransform>
     </Ellipse>
+    <Canvas x:Name="WaterBubble" Panel.ZIndex="1" Visibility="Collapsed" Width="174" Height="88" Cursor="Hand" ToolTip="点击查看上班状态">
+      <Path Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="3" StrokeLineJoin="Round"
+            Data="M 5,32 A 80,29 0 1 1 165,32 A 80,29 0 0 1 106,60 Q 100,69 88,62 A 80,29 0 0 1 5,32 Z"/>
+      <Grid Canvas.Left="18" Canvas.Top="16" Width="134" Height="32" RenderTransformOrigin="0.5,0.5">
+        <Grid.RenderTransform><ScaleTransform x:Name="WaterTextFacingScale"/></Grid.RenderTransform>
+        <TextBlock x:Name="WaterCountdown" Text="喝水  00:00" FontSize="17" FontWeight="SemiBold" Foreground="#745A98" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Grid>
+      <Ellipse Canvas.Left="112" Canvas.Top="70" Width="12" Height="8" Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="2.5"/>
+      <Ellipse Canvas.Left="130" Canvas.Top="82" Width="7" Height="5" Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="2"/>
+    </Canvas>
     <Image x:Name="Girl" Canvas.Left="142" Canvas.Top="142" Width="208" Height="208" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" Cursor="Hand"
            ToolTip="点角色看额度；点气泡看语录，再点收起；拖动调整位置；右键设置"/>
     <Button x:Name="MenuButton" Canvas.Left="320" Canvas.Top="162" Width="24" Height="24"

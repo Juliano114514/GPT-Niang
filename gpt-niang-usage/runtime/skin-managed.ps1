@@ -66,27 +66,70 @@ function Send-SkinAction([string]$Action,$Parameters=@{}) {
 function Initialize-SkinManagedRuntime {
   Initialize-SkinManagedTypes
   $script:skinRequestId=0;$script:skinSnapshot=$null;$script:skinReminders=[Collections.Generic.Queue[object]]::new()
-  foreach($name in @('WorkdayOpen','WorkdayText','WorkdaySurface','WorkdayCountdown','WorkdayWater','WorkdayIncome','WorkdayUsage','WorkdayPrimary','WorkdayDrink','WorkdaySettings')){
+  $script:skinHidden=$true;$script:skinOwnerClosed=$false;$script:skinReminderAnimating=$false;$script:skinWorkdaySecond=-1
+  foreach($name in @('WorkdayOpen','WorkdayText','WorkdaySurface','WorkdayPhase','WorkdayCountdown','WorkdayWater','WorkdayPrimary','WorkdayDrink','WaterBubble','WaterCountdown','WaterTextFacingScale')){
     $script:ui[$name]=$script:window.FindName($name)
   }
   $script:ui.WorkdayOpen.Visibility=[Windows.Visibility]::Visible
   $script:ui.WorkdayOpen.Add_Click({param($sender,$event)Update-SkinWorkday;Open-WidgetBubble 'workday';$event.Handled=$true})
   $script:ui.WorkdayPrimary.Add_Click({param($sender,$event)if($script:skinSnapshot){Send-SkinAction 'workday.primary' @{revision=$script:skinSnapshot.revision}};Restart-SceneTtl;$event.Handled=$true})
   $script:ui.WorkdayDrink.Add_Click({param($sender,$event)if($script:skinSnapshot){Send-SkinAction 'water.reset' @{revision=$script:skinSnapshot.revision}};Restart-SceneTtl;$event.Handled=$true})
-  $script:ui.WorkdaySettings.Add_Click({param($sender,$event)Send-SkinAction 'settings.open';Restart-SceneTtl;$event.Handled=$true})
+  $script:ui.WaterBubble.Add_MouseLeftButtonUp({param($sender,$event)Update-SkinWorkday;Open-WidgetBubble 'workday';$event.Handled=$true})
+  $script:ui.Girl.ToolTip='点角色依次查看上班状态、额度、语录；拖动调整位置；右键设置'
+  $script:ui.WaterTextFacingScale.ScaleX=$script:ui.FacingScale.ScaleX
+  Set-WidgetIndependentLayout
+  $script:window.Add_Closing({param($sender,$event)
+    if(!$script:skinOwnerClosed -and !$script:runtimeClosed){$event.Cancel=$true;Hide-SkinWidget}
+  })
   $script:skinNotificationTimer=[Windows.Threading.DispatcherTimer]::new()
   $script:skinNotificationTimer.Interval=[TimeSpan]::FromSeconds(9)
   $script:skinNotificationTimer.Add_Tick({$script:skinNotificationTimer.Stop();[GptSkinNotification]::Hide()})
   $script:skinBounceTimer=[Windows.Threading.DispatcherTimer]::new()
-  $script:skinBounceTimer.Interval=[TimeSpan]::FromMilliseconds(150)
-  $script:skinBounceTimer.Add_Tick({$script:skinBounceTimer.Stop();if(!$script:drag){Animate-Press $false}})
+  $script:skinBounceTimer.Interval=[TimeSpan]::FromMilliseconds(420)
+  $script:skinBounceTimer.Add_Tick({
+    if($script:skinHidden -or !$script:window.IsVisible -or $script:collapsed -or $script:bubbleMode-ne 'reminder' -or $script:drag -or $script:context.IsOpen){Stop-SkinReminderAnimation;return}
+    $script:skinReminderDown=!$script:skinReminderDown
+    Animate-Press $script:skinReminderDown
+  })
   [GptSkinPipe]::Start()
   Send-SkinAction 'ready' @{completionEnabled=[bool]$script:completionNotificationsEnabled}
 }
 
+function Stop-SkinReminderAnimation {
+  if(!$script:skinReminderAnimating){return}
+  $script:skinReminderAnimating=$false;$script:skinBounceTimer.Stop()
+  if(!$script:drag){Animate-Press $false}
+}
+
+function Hide-SkinWidget {
+  Send-SkinAction 'enable' @{enabled=$false}
+  Set-SkinWidgetVisibility $false
+}
+
+function Set-SkinWidgetVisibility([bool]$Visible) {
+  $script:skinHidden=!$Visible
+  if(!$Visible){
+    Stop-SkinReminderAnimation
+    Pause-CompletionNotification
+    if($script:widgetMusic -and $script:widgetMusic.Enabled){Stop-WidgetMusic}
+    if(!$script:collapsed){Hide-Quota}
+    $script:hostFollower.Suspend();$script:occlusionRecovery.Configure([IntPtr]::Zero,$false)
+    $script:context.IsOpen=$false
+    foreach($editor in @($script:quoteEditor,$script:colorTriggerEditor,$script:characterGallery)){if($editor -and $editor.IsVisible){$editor.Hide()}}
+    $script:window.Hide()
+  }
+  $script:lastPosition=$null
+}
+
+function Update-SkinWaterBubble {
+  if(!$script:ui.WaterBubble){return}
+  $show=$script:collapsed -and $script:skinSnapshot.workday.waterStartedAt -gt 0 -and !$script:settingsBubblePreview -and !($script:closeTimer -and $script:closeTimer.IsEnabled)
+  $script:ui.WaterBubble.Visibility=if($show){[Windows.Visibility]::Visible}else{[Windows.Visibility]::Collapsed}
+}
+
 function Update-SkinWorkday {
   $state=$script:skinSnapshot.workday
-  if(!$state){$script:ui.WorkdayCountdown.Text='正在连接上班状态…';$script:ui.WorkdayPrimary.IsEnabled=$false;$script:ui.WorkdayDrink.IsEnabled=$false;return}
+  if(!$state){$script:ui.WorkdayCountdown.Text='连接中';$script:ui.WorkdayPrimary.IsEnabled=$false;$script:ui.WorkdayDrink.IsEnabled=$false;Update-SkinWaterBubble;return}
   $script:ui.WorkdayPrimary.IsEnabled=$true;$script:ui.WorkdayDrink.IsEnabled=$true
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $settings=$state.settings;$session=$state.session
@@ -103,23 +146,22 @@ function Update-SkinWorkday {
       $running=$null-eq $session.stoppedAt -and $elapsed-lt $totalMs
     }
   }
-  $phase=if(!$current){'未上班'}elseif(!$running){'已下班'}elseif($elapsed-lt $workMs){'下班'}else{'加班'}
+  $phase=if(!$current){'上班'}elseif(!$running){'下班'}elseif($elapsed-lt $workMs){'下班'}else{'加班'}
   $remaining=if($running){[Math]::Max(0,([double]$(if($elapsed-lt $workMs){$workMs}else{$totalMs}))-$elapsed)}else{0}
   $minutes=[int][Math]::Ceiling($remaining/60000)
-  $script:ui.WorkdayCountdown.Text=$phase+'  '+('{0:00}:{1:00}'-f [int][Math]::Floor($minutes/60),($minutes%60))
+  $script:ui.WorkdayPhase.Text=$phase
+  $script:ui.WorkdayCountdown.FontSize=if($running){24}else{16}
+  $script:ui.WorkdayCountdown.Text=if($running){'{0:00}:{1:00}'-f [int][Math]::Floor($minutes/60),($minutes%60)}elseif($current){'已结束'}else{'未开始'}
   $water=[int][Math]::Max(0,[Math]::Ceiling(([double]$settings.waterMinutes*60000-($now-[double]$state.waterStartedAt))/1000))
-  $script:ui.WorkdayWater.Text='喝水  '+('{0:00}:{1:00}'-f [int][Math]::Floor($water/60),($water%60))
-  $incomeElapsed=if($running){[Math]::Floor($elapsed/60000)*60000}else{$elapsed}
-  $income=[double]$settings.monthlySalary/[double]$settings.workDays*[Math]::Min($incomeElapsed/$workMs,1)
-  if($overtimeMs-gt 0 -and $elapsed-ge $totalMs){$income+=[double]$settings.overtimePay}
-  $script:ui.WorkdayIncome.Text='今日已赚  ¥'+$income.ToString('N2')
-  $tokens=[double]$script:skinSnapshot.usage.totals.today.totalTokens
-  $script:ui.WorkdayUsage.Text='本机今日 Token  '+$tokens.ToString('N0')
+  $countdown='{0:00}:{1:00}'-f [int][Math]::Floor($water/60),($water%60)
+  $script:ui.WorkdayWater.Text=$countdown
+  $script:ui.WaterCountdown.Text='喝水  '+$countdown
   $script:ui.WorkdayPrimary.Content=if($running){'下班'}else{'上班'}
+  Update-SkinWaterBubble
 }
 
 function Tick-SkinManaged {
-  if([GptSkinPipe]::Closed){$script:window.Close();return}
+  if([GptSkinPipe]::Closed){$script:skinOwnerClosed=$true;$script:window.Close();return}
   $line=$null
   for($index=0;$index-lt 64 -and [GptSkinPipe]::TryRead([ref]$line);$index++){
     try {
@@ -128,14 +170,8 @@ function Tick-SkinManaged {
       switch([string]$message.type){
         'snapshot' {
           $script:skinSnapshot=$message;$script:status=$message.quota
-          foreach($entry in @(@{field='surface';control='WorkdaySurface';property='Background'},@{field='text';control='WorkdayText';property='TextElement.Foreground'})){
-            $value=$message.theme.($entry.field)
-            if([string]$value-match '^#[a-fA-F0-9]{6}$'){
-              $brush=[Windows.Media.BrushConverter]::new().ConvertFromString($value)
-              if($entry.field-eq 'surface'){$script:ui.WorkdaySurface.Background=$brush}
-              else{[Windows.Documents.TextElement]::SetForeground($script:ui.WorkdayText,$brush)}
-            }
-          }
+          if($script:skinHidden-eq [bool]$message.enabled){Set-SkinWidgetVisibility ([bool]$message.enabled)}
+          Update-SkinWorkday
           Update-Quota
         }
         'completion' {Receive-CompletionMonitorLine ($message.event|ConvertTo-Json -Compress)}
@@ -143,6 +179,8 @@ function Tick-SkinManaged {
           if($message.id-isnot [string] -or $message.title-isnot [string] -or $message.message-isnot [string]){continue}
           [GptSkinNotification]::Show($script:widgetHandle,[Drawing.SystemIcons]::Information.Handle,$message.title,$message.message)|Out-Null
           $script:skinNotificationTimer.Stop();$script:skinNotificationTimer.Start()
+          # Play one clip per reminder. The repeating pose timer never plays audio.
+          Play-WidgetPressSound
           if($script:skinReminders.Count-lt 4){$script:skinReminders.Enqueue($message)}
         }
         'error' {$script:ui.Status.Text=[string]$message.message;$script:ui.WorkdayCountdown.ToolTip=[string]$message.message}
@@ -150,7 +188,8 @@ function Tick-SkinManaged {
     }catch{$script:ui.Status.Text='共享状态暂不可用'}
     $line=$null
   }
-  if(!$script:collapsed -and $script:bubbleMode-eq 'workday'){Update-SkinWorkday}
+  $second=[long][Math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000)
+  if($second-ne $script:skinWorkdaySecond){$script:skinWorkdaySecond=$second;Update-SkinWorkday}
 }
 
 function Tick-SkinReminder {
@@ -158,6 +197,7 @@ function Tick-SkinReminder {
   $next=$script:skinReminders.Dequeue()
   $script:ui.QuoteText.Text=$next.title+[Environment]::NewLine+$next.message;Fit-QuoteText
   Open-WidgetBubble 'reminder'
+  $script:skinReminderAnimating=$true;$script:skinReminderDown=$true
   Animate-Press $true;$script:skinBounceTimer.Stop();$script:skinBounceTimer.Start()
 }
 

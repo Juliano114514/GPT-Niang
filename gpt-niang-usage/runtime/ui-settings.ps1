@@ -207,6 +207,7 @@ function Initialize-WidgetSettingsMenu {
   $script:settingsMenuUi.Completion.ToolTip='回答结束后在当前位置提醒；后台时临时置顶，显示后恢复'
   if($SkinManaged){
     Add-SettingsAction '上班与喝水状态' {Update-SkinWorkday;Open-WidgetBubble 'workday'}
+    Add-SettingsAction '上班与喝水设置' {Send-SkinAction 'settings.open'}
   }
   Add-SettingsDivider
   $script:settingsMenuUi.Display=Add-SettingsSubmenu '显示与位置' {
@@ -229,7 +230,8 @@ function Initialize-WidgetSettingsMenu {
   } -ReturnItem
   }
   Add-SettingsDivider
-  $exit=Add-SettingsAction '退出 GPT 娘' {Exit-WidgetForSession} -ReturnItem;$exit.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A1788D')
+  $exitLabel=if($SkinManaged){'隐藏浮窗'}else{'退出 GPT 娘'}
+  $exit=Add-SettingsAction $exitLabel {Exit-WidgetForSession} -ReturnItem;$exit.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A1788D')
   $script:context.Add_Opened({Pause-CompletionNotification;Reset-WidgetAutoQuoteSchedule;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost})
   $script:context.Add_Closed({Reset-WidgetAutoQuoteSchedule;Set-WidgetSizePreview $false})
   Initialize-SettingsMenuDismiss
