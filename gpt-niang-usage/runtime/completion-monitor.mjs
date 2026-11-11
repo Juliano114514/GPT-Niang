@@ -27,7 +27,7 @@ function saveMonitorState(file,at,lastEnded){
   try{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify({at,lastEnded}));}catch{}
 }
 
-export function parseCompletionRecord(record,{sessionId='',seenTurns=null,since=0}={}) {
+export function parseCompletionRecord(record,{sessionId='',seenTurns=null,since=0,preview=null}={}) {
   if(record?.type!=='event_msg' || !NORMAL_ENDINGS.has(record.payload?.type))return null;
   const payload=record.payload;
   if(payload.error || ['failed','cancelled','canceled','aborted','interrupted'].includes(payload.status))return null;
@@ -38,14 +38,16 @@ export function parseCompletionRecord(record,{sessionId='',seenTurns=null,since=
   const key=sessionId+'\0'+turnId;
   if(seenTurns?.has(key))return null;
   if(seenTurns){seenTurns.add(key);if(seenTurns.size>MAX_SEEN_TURNS)seenTurns.delete(seenTurns.values().next().value);}
-  return {type:'completion',sessionId,turnId,endedAt:Number.isFinite(endedAt)?endedAt:null};
+  const event={type:'completion',sessionId,turnId,endedAt:Number.isFinite(endedAt)?endedAt:null};
+  if(typeof preview==='function' && typeof payload.last_agent_message==='string')event.preview=preview(payload.last_agent_message);
+  return event;
 }
 
 function fileIdentity(stat){return `${stat.dev}:${stat.ino}`;}
 
 export class CompletionRolloutTail {
-  constructor(file,{sessionId=path.basename(file),baseline=false,since=0}={}) {
-    this.file=file;this.sessionId=sessionId;this.since=since;this.offset=0;
+  constructor(file,{sessionId=path.basename(file),baseline=false,since=0,preview=null}={}) {
+    this.file=file;this.sessionId=sessionId;this.since=since;this.preview=preview;this.offset=0;
     this.pending='';this.discardingLongLine=false;this.decoder=new StringDecoder('utf8');this.seenTurns=new Set();
     const stat=fs.statSync(file);this.identity=fileIdentity(stat);
     if(baseline)this.offset=stat.size;
@@ -76,7 +78,7 @@ export class CompletionRolloutTail {
       if(this.discardingLongLine){this.discardingLongLine=false;continue;}
       const line=raw.endsWith('\r')?raw.slice(0,-1):raw;
       if(line.length>MAX_LINE_CHARACTERS || !line.includes('"event_msg"'))continue;
-      try{const event=parseCompletionRecord(JSON.parse(line),{sessionId:this.sessionId,seenTurns:this.seenTurns,since:this.since});if(event)notifications.push(event);}catch{}
+      try{const event=parseCompletionRecord(JSON.parse(line),{sessionId:this.sessionId,seenTurns:this.seenTurns,since:this.since,preview:this.preview});if(event)notifications.push(event);}catch{}
     }
     if(this.pending.length>MAX_LINE_CHARACTERS){this.pending='';this.discardingLongLine=true;}
     return notifications;
@@ -146,9 +148,9 @@ function checkpointMatches(file,tail,checkpoint){
 }
 
 export class CompletionMonitor {
-  constructor({codexHome=defaultCodexHome(),intervalMs=1000,onNotification=()=>{},since=Date.now(),stateFile=null}={}){
+  constructor({codexHome=defaultCodexHome(),intervalMs=1000,onNotification=()=>{},since=Date.now(),stateFile=null,preview=null}={}){
     this.codexHome=codexHome;this.intervalMs=intervalMs;this.onNotification=onNotification;this.since=since;
-    this.stateFile=stateFile;this.resume=false;this.lastStateSave=0;this.lastEnded=0;
+    this.stateFile=stateFile;this.preview=preview;this.resume=false;this.lastStateSave=0;this.lastEnded=0;
     this.tails=new Map();this.subagentSessions=new Map();this.seenTurns=new Set();this.checkpoints=new Map();this.timer=null;
   }
   start(){
@@ -185,7 +187,7 @@ export class CompletionMonitor {
         // from their start and filtered by `since` instead of being skipped.
         let fileBaseline=baseline;
         if(fileBaseline && this.resume){try{if(fs.statSync(file).mtimeMs>=this.since)fileBaseline=false;}catch{}}
-        try{tail=new CompletionRolloutTail(file,{sessionId,baseline:fileBaseline,since:this.since});}catch{continue;}
+        try{tail=new CompletionRolloutTail(file,{sessionId,baseline:fileBaseline,since:this.since,preview:this.preview});}catch{continue;}
         if(fileBaseline && header.baselineBoundary?.offset===tail.offset){tail.boundaryBytes=header.baselineBoundary.bytes;tail.boundaryProof=header.baselineBoundary.proof;}
         const checkpoint=this.checkpoints.get(sessionId);
         if(checkpoint){
