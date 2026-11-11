@@ -175,13 +175,11 @@ function Set-WidgetCharacter([string]$Id,[switch]$NoSave) {
   if($script:widgetMusic -and $script:widgetMusic.Enabled){Stop-WidgetMusic}
   $character=Get-WidgetCharacter $script:appDir $script:dataDir $Id
   # Decode and build the click-through map before replacing the current pose.
-  $image=Read-WidgetCharacterImage $character.path
-  $alpha=[Windows.Media.Imaging.FormatConvertedBitmap]::new($image,[Windows.Media.PixelFormats]::Bgra32,$null,0)
-  $alpha.Freeze();$stride=$image.PixelWidth*4;$pixels=New-Object byte[] ($stride*$image.PixelHeight)
-  $alpha.CopyPixels($pixels,$stride,0)
-  $previous=@{bitmap=$script:bitmap;alpha=$script:alphaBitmap;stride=$script:alphaStride;pixels=$script:alphaPixels;id=$script:characterId;character=$script:activeCharacter}
+  $pixels=$null
+  $image=Read-WidgetCharacterImage $character.path ([ref]$pixels)
+  $previous=@{bitmap=$script:bitmap;stride=$script:alphaStride;pixels=$script:alphaPixels;id=$script:characterId;character=$script:activeCharacter}
   try{
-    $script:bitmap=$image;$script:alphaBitmap=$alpha;$script:alphaStride=$stride;$script:alphaPixels=$pixels
+    $script:bitmap=$image;$script:alphaStride=$image.PixelWidth*4;$script:alphaPixels=$pixels
     $script:characterId=$character.id;$script:activeCharacter=$character;$script:ui.Girl.Source=$image
     if($script:widgetColors){
       foreach($overlay in @($script:widgetColors.halo,$script:widgetColors.tint)){
@@ -190,7 +188,7 @@ function Set-WidgetCharacter([string]$Id,[switch]$NoSave) {
     }
     if(!$NoSave){Save-Settings}
   }catch{
-    $script:bitmap=$previous.bitmap;$script:alphaBitmap=$previous.alpha;$script:alphaStride=$previous.stride;$script:alphaPixels=$previous.pixels
+    $script:bitmap=$previous.bitmap;$script:alphaStride=$previous.stride;$script:alphaPixels=$previous.pixels
     $script:characterId=$previous.id;$script:activeCharacter=$previous.character;$script:ui.Girl.Source=$previous.bitmap
     if($script:widgetColors){foreach($overlay in @($script:widgetColors.halo,$script:widgetColors.tint)){if($overlay -and $overlay.OpacityMask){$overlay.OpacityMask.ImageSource=$previous.bitmap}}}
     throw

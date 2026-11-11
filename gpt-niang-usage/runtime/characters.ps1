@@ -75,7 +75,7 @@ function Get-WidgetCharacter([string]$AppDir,[string]$DataDir,[string]$Id) {
   return $rows[0]
 }
 
-function Read-WidgetCharacterImage([string]$Path) {
+function Read-WidgetCharacterImage([string]$Path,[ref]$HitPixels) {
   if(!$Path -or $Path-match '^[a-z][a-z0-9+.-]*://'){throw '请选择电脑上的图片文件。'}
   $extension=[IO.Path]::GetExtension($Path).ToLowerInvariant()
   if($extension-notin @('.png','.jpg','.jpeg','.bmp','.gif')){throw '支持 PNG、JPG、BMP 和 GIF 图片；GIF 使用第一帧。'}
@@ -94,6 +94,7 @@ function Read-WidgetCharacterImage([string]$Path) {
     $converted.CopyPixels($pixels,$stride,0)
     $image=[Windows.Media.Imaging.BitmapSource]::Create($width,$height,96,96,[Windows.Media.PixelFormats]::Bgra32,$null,$pixels,$stride)
     $image.Freeze()
+    if($HitPixels){$HitPixels.Value=$pixels}
     return $image
   }catch{
     if($_.Exception.Message-match '^(请选择|支持 |图片)'){throw}
