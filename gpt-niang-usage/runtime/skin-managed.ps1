@@ -96,7 +96,6 @@ function Initialize-SkinManagedRuntime {
   $script:skinCompactTaskId=$null;$script:skinCompactNotice=$null
   $script:skinPlayedTasks=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   $script:skinCompactTimer=[Windows.Threading.DispatcherTimer]::new()
-  $script:skinCompactTimer.Interval=[TimeSpan]::FromSeconds(10)
   $script:skinCompactTimer.Add_Tick({Update-SkinCompactBubble -Advance})
   $script:skinNoticeTimer=[Windows.Threading.DispatcherTimer]::new()
   $script:skinNoticeTimer.Interval=[TimeSpan]::FromSeconds(5)
@@ -172,6 +171,10 @@ function Set-SkinCompactPage([string]$Page,[bool]$Animate) {
   $previous=$script:skinCompactPage
   $incoming=$pages[$Page];$outgoing=$pages[$previous]
   $script:skinCompactPage=$Page
+  if($Page-ne 'notice'){
+    $seconds=if($Page-eq 'water'){5}else{10}
+    $script:skinCompactTimer.Interval=[TimeSpan]::FromSeconds($seconds)
+  }
   Set-SkinStepPulse ($Page-eq 'task')
   $opacity=[Windows.UIElement]::OpacityProperty;$y=[Windows.Media.TranslateTransform]::YProperty
   foreach($layer in $pages.Values){

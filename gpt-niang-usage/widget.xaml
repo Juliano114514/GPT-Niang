@@ -85,6 +85,29 @@
         </Border>
       </Grid>
     <Ellipse x:Name="LiveDot" Visibility="Collapsed" Canvas.Left="134" Canvas.Top="17" Width="4" Height="4" Fill="#9B86C1" IsHitTestVisible="False"/>
+      <Button x:Name="CollapseBubble" Canvas.Left="260" Canvas.Top="12" Width="24" Height="24"
+              Background="{Binding Fill, ElementName=BubbleShape}" BorderBrush="{Binding Stroke, ElementName=BubbleShape}"
+              Foreground="{Binding Stroke, ElementName=BubbleShape}" BorderThickness="2"
+              ToolTip="收起大气泡" AutomationProperties.Name="收起大气泡">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonBody" CornerRadius="12" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonBody" Property="Background" Value="#EDE7F6"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Button.Template>
+        <Canvas Width="14" Height="14" UseLayoutRounding="False" IsHitTestVisible="False">
+          <Path Data="M 2.5,5 L 7,9.5 L 11.5,5"
+                Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8"
+                StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+        </Canvas>
+      </Button>
     </Canvas>
     <Ellipse x:Name="Tail" Canvas.Left="108" Canvas.Top="182" Width="25" Height="18" Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="4" RenderTransformOrigin="0.5,0.5">
       <Ellipse.RenderTransform><ScaleTransform/></Ellipse.RenderTransform>
@@ -104,11 +127,13 @@
           <StackPanel.RenderTransform><TranslateTransform/></StackPanel.RenderTransform>
           <TextBlock x:Name="CompactTaskTitle" TextAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="13.5" FontWeight="SemiBold" Foreground="#60477D"/>
           <Grid Height="17" ClipToBounds="True" Margin="5,0">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Ellipse x:Name="CompactTaskPulse" Width="5" Height="5" Fill="#8463AF" VerticalAlignment="Center"/>
-            <TextBlock x:Name="CompactTaskStep" Grid.Column="1" TextAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="#806B98">
-              <TextBlock.RenderTransform><TranslateTransform/></TextBlock.RenderTransform>
-            </TextBlock>
+            <Grid HorizontalAlignment="Center">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Ellipse x:Name="CompactTaskPulse" Width="5" Height="5" Fill="#8463AF" VerticalAlignment="Center"/>
+              <TextBlock x:Name="CompactTaskStep" Grid.Column="1" TextAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="#806B98">
+                <TextBlock.RenderTransform><TranslateTransform/></TextBlock.RenderTransform>
+              </TextBlock>
+            </Grid>
           </Grid>
         </StackPanel>
         <TextBlock x:Name="CompactNotice" VerticalAlignment="Center" Margin="6,0" MaxHeight="37.5" Opacity="0" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" FontSize="10.5" LineHeight="12.5" LineStackingStrategy="BlockLineHeight" Foreground="#635670">
