@@ -119,7 +119,9 @@ public static class GptCompletionMonitorOutput {
 }
 
 function Initialize-CompletionNotificationState($Settings=$null) {
-  $script:completionNotificationsEnabled=($Settings.taskCompletionBubble-is [bool] -and $Settings.taskCompletionBubble)
+  $script:completionSetting=if($SkinManaged){'skinTaskCompletionBubble'}else{'taskCompletionBubble'}
+  $saved=$Settings.($script:completionSetting)
+  $script:completionNotificationsEnabled=if($saved-is [bool]){$saved}else{[bool]$SkinManaged}
   $script:completionPending=$false;$script:completionProcess=$null;$script:completionRetryAfter=0
   $script:completionReceived=0;$script:completionDisplayCount=0;$script:completionLastError=$null
   $script:completionAcknowledgedAt=0;$script:completionTemporary=$null
@@ -168,6 +170,7 @@ function Start-CompletionMonitor {
 }
 function Stop-CompletionMonitor {
   Stop-TemporaryCompletion
+  if($SkinManaged){return}
   [GptCompletionMonitorOutput]::Clear()
   if(!$script:completionProcess){return}
   try{

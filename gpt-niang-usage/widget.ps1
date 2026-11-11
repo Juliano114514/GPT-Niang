@@ -170,7 +170,7 @@ function Write-WidgetJson($file,$value){
   $temp=$file+'.tmp';[IO.File]::WriteAllText($temp,($value|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
   if([IO.File]::Exists($file)){[IO.File]::Replace($temp,$file,($file+'.bak'),$true)}else{[IO.File]::Move($temp,$file)}
 }
-function Save-Settings {Write-WidgetJson $settingsFile @{layoutVersion=2;right=$script:offsetRight;left=$script:offsetLeft;bottom=$script:offsetBottom;anchor=$script:anchor;side=$script:side;scale=$script:scale;bubbleScale=$script:bubbleScale;collapsed=$script:collapsed;soundOn=$script:soundOn;soundVolume=$script:soundVolume;bubbleTapAdvance=$script:bubbleTapAdvance;hideMenu=$script:hideMenu;colorMode=$script:colorMode;colorChance=$script:colorChance;colorTextChance=$script:colorTextChance;colorPaused=$script:colorPaused;followHost=$script:followHost;desktopTopmost=$script:desktopTopmost;desktopLeft=$script:desktopLeft;desktopTop=$script:desktopTop;characterId=$script:characterId;autoQuoteEnabled=$script:autoQuoteEnabled;autoQuoteIntervalSeconds=$script:autoQuoteIntervalSeconds;taskCompletionBubble=$script:completionNotificationsEnabled}}
+function Save-Settings {Write-WidgetJson $settingsFile @{layoutVersion=2;right=$script:offsetRight;left=$script:offsetLeft;bottom=$script:offsetBottom;anchor=$script:anchor;side=$script:side;scale=$script:scale;bubbleScale=$script:bubbleScale;collapsed=$script:collapsed;soundOn=$script:soundOn;soundVolume=$script:soundVolume;bubbleTapAdvance=$script:bubbleTapAdvance;hideMenu=$script:hideMenu;colorMode=$script:colorMode;colorChance=$script:colorChance;colorTextChance=$script:colorTextChance;colorPaused=$script:colorPaused;followHost=$script:followHost;desktopTopmost=$script:desktopTopmost;desktopLeft=$script:desktopLeft;desktopTop=$script:desktopTop;characterId=$script:characterId;autoQuoteEnabled=$script:autoQuoteEnabled;autoQuoteIntervalSeconds=$script:autoQuoteIntervalSeconds;($script:completionSetting)=$script:completionNotificationsEnabled}}
 function Set-WidgetCharacter([string]$Id,[switch]$NoSave) {
   if($script:widgetMusic -and $script:widgetMusic.Enabled){Stop-WidgetMusic}
   $character=Get-WidgetCharacter $script:appDir $script:dataDir $Id
@@ -437,7 +437,7 @@ function Set-BubbleState {
   }
   Set-AnimatedValue $script:ui.SceneText ([Windows.UIElement]::OpacityProperty) 1
   $script:ui.Bubble.IsHitTestVisible=!$script:collapsed
-  if($SkinManaged){Update-SkinWaterBubble}
+  if($SkinManaged){Update-SkinCompactBubble}
 }
 $script:bubbleEpoch=0;$script:closeTimer=$null
 function Restart-SceneTtl([int]$renderDelay=0,[long]$now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()){
@@ -597,7 +597,7 @@ function Test-WidgetCompletionHostForeground {
   return $foreground-eq $script:hostHandle
 }
 function Tick-WidgetAutoQuote([long]$Now,[bool]$Visible) {
-  $busy=($script:completionNotificationsEnabled -and $script:completionPending) -or !$script:collapsed -or [bool]$script:drag -or $script:context.IsOpen -or $script:settingsSizePreview -or ($script:closeTimer -and $script:closeTimer.IsEnabled) -or (Test-WidgetUpdateEditor)
+  $busy=($script:completionNotificationsEnabled -and $script:completionPending) -or ($SkinManaged -and $script:skinCompactNotice) -or !$script:collapsed -or [bool]$script:drag -or $script:context.IsOpen -or $script:settingsSizePreview -or ($script:closeTimer -and $script:closeTimer.IsEnabled) -or (Test-WidgetUpdateEditor)
   if(Test-WidgetAutoQuoteDue $Now $Visible ([bool]$busy)){Show-Quote;$script:autoQuoteDisplayCount++}
 }
 function Show-Quota {
@@ -610,7 +610,7 @@ function Open-WidgetBubble([ValidateSet('quota','quote','completion','workday','
   Reset-WidgetAutoQuoteSchedule
   if(!$script:collapsed){if($Mode-eq 'quote' -or $script:bubbleMode-ne $Mode){Switch-Scene $Mode}else{Restart-SceneTtl};return}
   $script:bubbleEpoch++;$script:collapsed=$false;$script:sceneRevision++
-  if($SkinManaged){Update-SkinWaterBubble}
+  if($SkinManaged){Update-SkinCompactBubble}
   $script:bubbleMode=$Mode
   if($Mode-eq 'quote'){$script:ui.QuoteText.Text=Get-WidgetBubbleQuote $script:dataDir;Fit-QuoteText}
   if($Mode-eq 'completion'){$script:ui.QuoteText.Text="Codex`n有回复已结束";Fit-QuoteText}
@@ -1134,9 +1134,7 @@ function Tick-Widget {
     Update-WidgetMusicVisibility ([bool]$visible) ([bool]($script:completionTemporary -or $script:settingsSizePreview -or ($script:characterGallery -and $script:characterGallery.IsVisible) -or ($script:quoteEditor -and $script:quoteEditor.IsVisible)))
     if(!$SkinManaged){Write-WidgetPresence ([bool]$visible) $now}
     Update-Quota;$script:lastPresence=$now
-    if(!$SkinManaged){Read-DisplayRequest}
-    Tick-CompletionNotifications ([bool]$visible)
-    if($SkinManaged){Tick-SkinReminder}
+    if($SkinManaged){Tick-SkinReminder}else{Read-DisplayRequest;Tick-CompletionNotifications ([bool]$visible)}
     Tick-WidgetAutoQuote $now ([bool]$visible)
   }
   }finally{$script:updating=$false}
