@@ -82,14 +82,24 @@ function Initialize-SkinManagedRuntime {
   Initialize-SkinManagedTypes
   $script:skinRequestId=0;$script:skinSnapshot=$null;$script:skinReminders=[Collections.Generic.Queue[object]]::new()
   $script:skinHidden=$true;$script:skinOwnerClosed=$false;$script:skinReminderAnimating=$false;$script:skinWorkdaySecond=-1
-  foreach($name in @('WorkdayOpen','WorkdayText','WorkdaySurface','WorkdayPhase','WorkdayCountdown','WorkdayWater','WorkdayPrimary','WorkdayDrink','WaterBubble','WaterCountdown','WaterTextFacingScale','CompactTask','CompactTaskTitle','CompactTaskStep','CompactTaskPulse','CompactNotice','CompactNoticeMark','CompactNoticeTitle','CompactNoticePreview')){
+  foreach($name in @('WorkdayOpen','WorkdayText','WorkdaySurface','WorkdayPhase','WorkdayCountdown','WorkdayWater','WorkdayPrimary','WorkdayDrink','WaterBubble','WaterCountdown','WaterTextFacingScale','CompactTask','CompactTaskTitle','CompactTaskStep','CompactTaskPulse','CompactNotice','CompactNoticeMark','CompactNoticeTitle','CompactNoticePreview','CompactMeditation','MeditationRhythm','MeditationCycle','MeditationAuto')){
     $script:ui[$name]=$script:window.FindName($name)
   }
   $script:ui.WorkdayOpen.Visibility=[Windows.Visibility]::Visible
   $script:ui.WorkdayOpen.Add_Click({param($sender,$event)Update-SkinWorkday;Open-WidgetBubble 'workday';$event.Handled=$true})
   $script:ui.WorkdayPrimary.Add_Click({param($sender,$event)if($script:skinSnapshot){Send-SkinAction 'workday.primary' @{revision=$script:skinSnapshot.revision}};Restart-SceneTtl;$event.Handled=$true})
   $script:ui.WorkdayDrink.Add_Click({param($sender,$event)if($script:skinSnapshot){Send-SkinAction 'water.reset' @{revision=$script:skinSnapshot.revision}};Restart-SceneTtl;$event.Handled=$true})
-  $script:ui.WaterBubble.Add_MouseLeftButtonUp({param($sender,$event)Stop-SkinCompactNotice;Update-SkinWorkday;Open-WidgetBubble 'workday';$event.Handled=$true})
+  $script:ui.WaterBubble.Add_MouseLeftButtonUp({param($sender,$event)
+    if($script:skinCompactPage-eq 'meditation'){return}
+    Stop-SkinCompactNotice;Update-SkinWorkday;Open-WidgetBubble 'workday';$event.Handled=$true
+  })
+  foreach($button in @($script:ui.MeditationRhythm,$script:ui.MeditationCycle)){
+    $button.Add_Click({param($sender,$event)Open-WidgetMeditationEditor $sender;$event.Handled=$true})
+  }
+  $script:ui.MeditationAuto.Add_Click({param($sender,$event)
+    if($script:widgetMeditation){$script:widgetMeditation.Recognize()}
+    $event.Handled=$true
+  })
   $script:ui.Girl.ToolTip='点角色依次查看上班状态、额度、语录；拖动调整位置；右键设置'
   $script:ui.WaterTextFacingScale.ScaleX=$script:ui.FacingScale.ScaleX
   $script:skinCompactPage=''
@@ -100,7 +110,10 @@ function Initialize-SkinManagedRuntime {
   $script:skinNoticeTimer=[Windows.Threading.DispatcherTimer]::new()
   $script:skinNoticeTimer.Interval=[TimeSpan]::FromSeconds(5)
   $script:skinNoticeTimer.Add_Tick({Stop-SkinCompactNotice;Update-SkinCompactBubble})
-  $script:window.Add_IsVisibleChanged({Update-SkinCompactBubble})
+  $script:window.Add_IsVisibleChanged({
+    if(!$script:window.IsVisible){Stop-WidgetMeditation}
+    Update-SkinCompactBubble
+  })
   Set-WidgetIndependentLayout
   $script:window.Add_Closing({param($sender,$event)
     if(!$script:skinOwnerClosed -and !$script:runtimeClosed){$event.Cancel=$true;Hide-SkinWidget}
@@ -143,6 +156,7 @@ function Set-SkinWidgetVisibility([bool]$Visible) {
   $script:skinHidden=!$Visible
   if(!$Visible){
     Stop-SkinCompactNotice
+    Stop-WidgetMeditation
     Update-SkinCompactBubble
     Stop-SkinReminderAnimation
     Pause-CompletionNotification
@@ -167,11 +181,13 @@ function Set-SkinStepPulse([bool]$Visible) {
 }
 
 function Set-SkinCompactPage([string]$Page,[bool]$Animate) {
-  $pages=@{water=$script:ui.WaterCountdown;task=$script:ui.CompactTask;notice=$script:ui.CompactNotice}
+  $pages=@{water=$script:ui.WaterCountdown;task=$script:ui.CompactTask;notice=$script:ui.CompactNotice;meditation=$script:ui.CompactMeditation}
   $previous=$script:skinCompactPage
   $incoming=$pages[$Page];$outgoing=$pages[$previous]
   $script:skinCompactPage=$Page
-  if($Page-ne 'notice'){
+  $script:ui.CompactMeditation.IsHitTestVisible=$Page-eq 'meditation'
+  $script:ui.WaterBubble.Cursor=if($Page-eq 'meditation'){[Windows.Input.Cursors]::Arrow}else{[Windows.Input.Cursors]::Hand}
+  if($Page-in @('water','task')){
     $seconds=if($Page-eq 'water'){5}else{10}
     $script:skinCompactTimer.Interval=[TimeSpan]::FromSeconds($seconds)
   }
@@ -195,6 +211,7 @@ function Set-SkinCompactPage([string]$Page,[bool]$Animate) {
   $script:ui.WaterBubble.ToolTip=switch($Page){
     'task' {$script:ui.CompactTaskTitle.Text+[Environment]::NewLine+$script:ui.CompactTaskStep.Text}
     'notice' {$script:skinCompactNotice.title+' · '+$script:skinCompactNotice.message}
+    'meditation' {$null}
     default {'点击查看上班状态'}
   }
 }
@@ -239,7 +256,7 @@ function Update-SkinCompactBubble([switch]$Advance) {
   if(!$script:ui.WaterBubble){return}
   $tasks=@($script:skinSnapshot.tasks|Where-Object{$_.id-is [string] -and $_.title-is [string]})
   $water=$script:skinSnapshot.workday.waterStartedAt -gt 0
-  $show=($water -or $tasks.Count -or $script:skinCompactNotice) -and !$script:skinHidden -and $script:window.IsVisible -and $script:collapsed -and !$script:settingsBubblePreview -and !($script:closeTimer -and $script:closeTimer.IsEnabled)
+  $show=($water -or $tasks.Count -or $script:skinCompactNotice -or $script:widgetMeditation) -and !$script:skinHidden -and $script:window.IsVisible -and $script:collapsed -and !$script:settingsBubblePreview -and !($script:closeTimer -and $script:closeTimer.IsEnabled)
   if(!$show){
     if($script:skinCompactPage-eq 'task'){Set-SkinStepPulse $false}
     $script:skinCompactTimer.Stop();$script:skinCompactPage=''
@@ -252,10 +269,15 @@ function Update-SkinCompactBubble([switch]$Advance) {
     if($script:skinCompactPage-ne 'notice'){Set-SkinCompactPage 'notice' ([bool]$script:skinCompactPage)}
     return
   }
+  if($script:widgetMeditation){
+    $script:skinCompactTimer.Stop()
+    if($script:skinCompactPage-ne 'meditation'){Set-SkinCompactPage 'meditation' ([bool]$script:skinCompactPage)}
+    return
+  }
   $current=$tasks|Where-Object{$_.id-ceq $script:skinCompactTaskId}|Select-Object -First 1
   $cycle=$tasks.Count-gt 0 -and ($water -or $tasks.Count-gt 1)
   $lostTask=$script:skinCompactPage-eq 'task' -and !$current
-  if($Advance -or $lostTask -or $script:skinCompactPage-in @('','notice') -or ($script:skinCompactPage-eq 'water' -and !$script:skinCompactTimer.IsEnabled -and $tasks.Count)){
+  if($Advance -or $lostTask -or $script:skinCompactPage-in @('','notice','meditation') -or ($script:skinCompactPage-eq 'water' -and !$script:skinCompactTimer.IsEnabled -and $tasks.Count)){
     Select-SkinCompactSlot $tasks $water
     if($lostTask){$script:skinCompactTimer.Stop()}
   }elseif($current -and $script:skinCompactPage-eq 'task'){Set-SkinCompactTaskText $current $true}
@@ -351,6 +373,7 @@ function Tick-SkinReminder {
     Update-SkinCompactBubble
     $script:skinNoticeTimer.Start();Play-WidgetPressSound
   }
+  if($script:widgetMeditation){return}
   $script:skinReminderAnimating=$true;$script:skinReminderDown=$true
   Animate-Press $true;$script:skinBounceTimer.Stop();$script:skinBounceTimer.Start()
 }

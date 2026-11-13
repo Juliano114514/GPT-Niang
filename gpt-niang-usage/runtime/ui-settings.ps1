@@ -191,6 +191,10 @@ function Initialize-WidgetSettingsMenu {
   Add-SettingsAction '编辑我的语录' {Open-QuoteEditor}
   $script:settingsMenuUi.MusicEnabled=Add-SettingsAction '音乐律动' {param($sender,$event)Set-WidgetMusicEnabled ([bool]$sender.IsChecked);$script:context.IsOpen=$false} -Checkable -ReturnItem
   $script:settingsMenuUi.MusicEnabled.ToolTip='先听几拍确认节奏，再跟拍。拿起时按设置的双倍概率决定人物是否变色；拖动后松手可甩出，碰边反弹、落地继续跟拍。关闭后恢复原位置。'
+  if($SkinManaged){
+    $script:settingsMenuUi.Meditation=Add-SettingsAction '入定模式' {param($sender,$event)$script:context.IsOpen=$false;Set-WidgetMeditationEnabled ([bool]$sender.IsChecked)} -Checkable -ReturnItem
+    $script:settingsMenuUi.Meditation.ToolTip='按节拍缓慢呼吸，在小气泡里调整节奏。'
+  }
   $script:settingsMenuUi.AutoQuotes=Add-SettingsSubmenu '自动语录' {
     $script:settingsMenuUi.AutoQuoteEnabled=Add-SettingsAction '开启自动语录' {param($sender,$event)Set-WidgetAutoQuoteSettings ([bool]$sender.IsChecked) $script:autoQuoteIntervalSeconds;Update-WidgetSettingsMenu} -Checkable -ReturnItem
     Add-SettingsDivider
@@ -275,6 +279,7 @@ function Update-WidgetSettingsMenu{
   try{
     if(!$SkinManaged){Update-WidgetUpdateMenu}
     $script:settingsMenuUi.MusicEnabled.IsChecked=Test-WidgetMusicActive
+    if($script:settingsMenuUi.Meditation){$script:settingsMenuUi.Meditation.IsChecked=[bool]$script:widgetMeditation}
     $script:settingsMenuUi.Completion.IsChecked=$script:completionNotificationsEnabled
     $script:settingsMenuUi.AutoQuoteEnabled.IsChecked=$script:autoQuoteEnabled
     foreach($choice in $script:settingsMenuUi.AutoQuoteIntervals){$choice.IsChecked=[int]$choice.Tag-eq $script:autoQuoteIntervalSeconds}

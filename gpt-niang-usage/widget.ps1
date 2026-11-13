@@ -177,6 +177,7 @@ function Set-WidgetCharacter([string]$Id,[switch]$NoSave) {
   # Decode and build the click-through map before replacing the current pose.
   $pixels=$null
   $image=Read-WidgetCharacterImage $character.path ([ref]$pixels)
+  $closedEyes=if($script:widgetMeditation){Read-WidgetClosedEyes $character.id}
   $previous=@{bitmap=$script:bitmap;stride=$script:alphaStride;pixels=$script:alphaPixels;id=$script:characterId;character=$script:activeCharacter}
   try{
     $script:bitmap=$image;$script:alphaStride=$image.PixelWidth*4;$script:alphaPixels=$pixels
@@ -193,6 +194,7 @@ function Set-WidgetCharacter([string]$Id,[switch]$NoSave) {
     if($script:widgetColors){foreach($overlay in @($script:widgetColors.halo,$script:widgetColors.tint)){if($overlay -and $overlay.OpacityMask){$overlay.OpacityMask.ImageSource=$previous.bitmap}}}
     throw
   }
+  if($script:widgetMeditation){$script:widgetMeditation.SetPortrait($image,$closedEyes)}
   if($script:settingsMenuUi){Update-WidgetSettingsMenu}
   return $character
 }
@@ -286,6 +288,7 @@ function Set-WidgetIndependentLayout {
   }
   Sync-WidgetCharacterColors
   if($script:widgetMusic -and $script:widgetMusic.Enabled){$script:widgetMusic.CaptureBaseLayout()}
+  if($script:widgetMeditation){$script:widgetMeditation.RefreshLayout()}
 }
 function Set-Appearance {
   $previousDisplayScale=$script:displayScale
@@ -595,7 +598,7 @@ function Test-WidgetCompletionHostForeground {
   return $foreground-eq $script:hostHandle
 }
 function Tick-WidgetAutoQuote([long]$Now,[bool]$Visible) {
-  $busy=($script:completionNotificationsEnabled -and $script:completionPending) -or ($SkinManaged -and $script:skinCompactNotice) -or !$script:collapsed -or [bool]$script:drag -or $script:context.IsOpen -or $script:settingsSizePreview -or ($script:closeTimer -and $script:closeTimer.IsEnabled) -or (Test-WidgetUpdateEditor)
+  $busy=($script:completionNotificationsEnabled -and $script:completionPending) -or ($SkinManaged -and ($script:skinCompactNotice -or $script:widgetMeditation)) -or !$script:collapsed -or [bool]$script:drag -or $script:context.IsOpen -or $script:settingsSizePreview -or ($script:closeTimer -and $script:closeTimer.IsEnabled) -or (Test-WidgetUpdateEditor)
   if(Test-WidgetAutoQuoteDue $Now $Visible ([bool]$busy)){Show-Quote;$script:autoQuoteDisplayCount++}
 }
 function Show-Quota {
@@ -682,7 +685,8 @@ function Test-GirlAlpha([Windows.Point]$rootPoint){
   $x=[int][Math]::Floor(($point.X-($script:ui.Girl.ActualWidth-$script:bitmap.PixelWidth*$fit)/2)/$fit)
   $y=[int][Math]::Floor(($point.Y-($script:ui.Girl.ActualHeight-$script:bitmap.PixelHeight*$fit)/2)/$fit)
   if($x-lt 0 -or $y-lt 0 -or $x-ge $script:bitmap.PixelWidth -or $y-ge $script:bitmap.PixelHeight){return $false}
-  return $script:alphaPixels[$y*$script:alphaStride+$x*4+3]-gt 10
+  $index=$y*$script:alphaStride+$x*4+3
+  return $index-lt $script:alphaPixels.Length -and $script:alphaPixels[$index]-gt 10
 }
 function Test-WidgetHit([Windows.Point]$rootPoint){
   $hit=$script:ui.Root.InputHitTest($rootPoint)
@@ -845,11 +849,23 @@ $script:messageHook=[Windows.Interop.HwndSourceHook]{param($hwnd,$msg,$w,$l,[ref
     $script:lastPosition=$null
     if($script:hostEventTimer -and !$script:hostEventTimer.IsEnabled){$script:hostEventTimer.Start()}
   }
-  if($msg-eq 0x84 -and !$script:drag){
-    $packed=$l.ToInt64();$x=[int]($packed-band 65535);$y=[int](($packed-shr 16)-band 65535)
-    if($x-ge 32768){$x-=65536};if($y-ge 32768){$y-=65536}
-    $point=$script:ui.Root.PointFromScreen([Windows.Point]::new($x,$y))
-    if(!(Test-WidgetHit $point)){$handled.Value=$true;return [IntPtr](-1)}
+  if($msg-eq 0x84){
+    $handled.Value=$true
+    if($script:drag){return [IntPtr]1}
+    try{
+      $packed=$l.ToInt64();$x=[int]($packed-band 65535);$y=[int](($packed-shr 16)-band 65535)
+      if($x-ge 32768){$x-=65536};if($y-ge 32768){$y-=65536}
+      $root=$script:ui.Root
+      if([Windows.PresentationSource]::FromVisual($root) -and (Test-WidgetHit ($root.PointFromScreen([Windows.Point]::new($x,$y))))){
+        return [IntPtr]1
+      }
+    }catch{
+      if(!$script:widgetHitError){
+        $script:widgetHitError=$true
+        try{[IO.File]::WriteAllText((Join-Path $script:dataDir 'hit-error.txt'),$_.Exception.Message,[Text.UTF8Encoding]::new($false))}catch{}
+      }
+    }
+    return [IntPtr](-1)
   }
   if($msg-eq 0x21){$handled.Value=$true;return [IntPtr]3};return [IntPtr]::Zero
 }
@@ -1003,6 +1019,7 @@ function Stop-WidgetRuntime {
   if($SkinManaged){try{Stop-SkinManagedRuntime}catch{}}
   try{if($script:occlusionRecovery){$script:occlusionRecovery.Dispose()}}catch{}
   try{Stop-WidgetMusic}catch{}
+  try{Stop-WidgetMeditation}catch{}
   try{if($script:hostFollower){$script:hostFollower.Dispose()}}catch{}
   foreach($timer in @($script:settingsMenuDismissTimer,$script:timer,$script:hostEventTimer,$script:menuTimer,$script:sceneTimer,$script:resetPhaseTimer,$script:closeTimer)){try{if($timer){$timer.Stop()}}catch{}}
   try{Stop-CompletionMonitor;Clear-CompletionNotifications}catch{}

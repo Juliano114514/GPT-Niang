@@ -118,12 +118,12 @@
     <Canvas x:Name="WaterBubble" Panel.ZIndex="1" Visibility="Collapsed" Width="174" Height="88" Cursor="Hand" ToolTip="点击查看上班状态">
       <Path Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="3" StrokeLineJoin="Round"
             Data="M 5,32 A 80,29 0 1 1 165,32 A 80,29 0 0 1 106,60 Q 100,69 88,62 A 80,29 0 0 1 5,32 Z"/>
-      <Grid Canvas.Left="18" Canvas.Top="12" Width="134" Height="40" ClipToBounds="True" IsHitTestVisible="False" RenderTransformOrigin="0.5,0.5">
+      <Grid Canvas.Left="18" Canvas.Top="12" Width="134" Height="40" ClipToBounds="True" RenderTransformOrigin="0.5,0.5">
         <Grid.RenderTransform><ScaleTransform x:Name="WaterTextFacingScale"/></Grid.RenderTransform>
-        <TextBlock x:Name="WaterCountdown" Text="喝水  00:00" FontSize="17" FontWeight="SemiBold" Foreground="#745A98" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <TextBlock x:Name="WaterCountdown" Text="喝水  00:00" FontSize="17" FontWeight="SemiBold" Foreground="#745A98" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
           <TextBlock.RenderTransform><TranslateTransform/></TextBlock.RenderTransform>
         </TextBlock>
-        <StackPanel x:Name="CompactTask" VerticalAlignment="Center" Opacity="0">
+        <StackPanel x:Name="CompactTask" VerticalAlignment="Center" Opacity="0" IsHitTestVisible="False">
           <StackPanel.RenderTransform><TranslateTransform/></StackPanel.RenderTransform>
           <TextBlock x:Name="CompactTaskTitle" TextAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="13.5" FontWeight="SemiBold" Foreground="#60477D"/>
           <Grid Height="17" ClipToBounds="True" Margin="5,0">
@@ -136,10 +136,39 @@
             </Grid>
           </Grid>
         </StackPanel>
-        <TextBlock x:Name="CompactNotice" VerticalAlignment="Center" Margin="6,0" MaxHeight="37.5" Opacity="0" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" FontSize="10.5" LineHeight="12.5" LineStackingStrategy="BlockLineHeight" Foreground="#635670">
+        <TextBlock x:Name="CompactNotice" VerticalAlignment="Center" Margin="6,0" MaxHeight="37.5" Opacity="0" TextAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" FontSize="10.5" LineHeight="12.5" LineStackingStrategy="BlockLineHeight" Foreground="#635670" IsHitTestVisible="False">
           <TextBlock.RenderTransform><TranslateTransform/></TextBlock.RenderTransform>
           <Run x:Name="CompactNoticeMark" FontWeight="Bold" Foreground="#25804A"/><Run x:Name="CompactNoticeTitle" FontWeight="SemiBold" Foreground="#513968"/><Run Text=" · "/><Run x:Name="CompactNoticePreview"/>
         </TextBlock>
+        <StackPanel x:Name="CompactMeditation" VerticalAlignment="Center" Opacity="0" IsHitTestVisible="False">
+          <StackPanel.RenderTransform><TranslateTransform/></StackPanel.RenderTransform>
+          <StackPanel.Resources>
+            <Style x:Key="MeditationLink" TargetType="Button">
+              <Setter Property="Foreground" Value="#745A98"/>
+              <Setter Property="FontSize" Value="11"/>
+              <Setter Property="Cursor" Value="Hand"/>
+              <Setter Property="Focusable" Value="False"/>
+              <Setter Property="Template">
+                <Setter.Value><ControlTemplate TargetType="Button">
+                  <Border Background="Transparent" Padding="2,1">
+                    <TextBlock x:Name="Label" Text="{TemplateBinding Content}" TextAlignment="Center"/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Label" Property="TextDecorations" Value="Underline"/></Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value>
+              </Setter>
+            </Style>
+          </StackPanel.Resources>
+          <Button x:Name="MeditationRhythm" HorizontalAlignment="Center" Style="{StaticResource MeditationLink}" FontSize="12" FontWeight="SemiBold"
+                  Content="{Binding RhythmText}" ToolTip="调整 BPM 和拍号"/>
+          <Grid Margin="1,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="31"/><ColumnDefinition Width="*"/><ColumnDefinition Width="39"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding PhaseText}" Foreground="#60477D" FontWeight="SemiBold" FontSize="11" TextAlignment="Center" VerticalAlignment="Center"/>
+            <Button x:Name="MeditationCycle" Grid.Column="1" Style="{StaticResource MeditationLink}" Content="{Binding CycleText}" ToolTip="调整每轮呼吸拍数"/>
+            <Button x:Name="MeditationAuto" Grid.Column="2" Style="{StaticResource MeditationLink}" FontSize="10" Content="{Binding AutoText}" ToolTip="从当前播放的声音重新识别节拍。显示「未识别」时可点击重试。"/>
+          </Grid>
+        </StackPanel>
       </Grid>
       <Ellipse Canvas.Left="112" Canvas.Top="70" Width="12" Height="8" Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="2.5"/>
       <Ellipse Canvas.Left="130" Canvas.Top="82" Width="7" Height="5" Fill="#FFFFFF" Stroke="#745A98" StrokeThickness="2"/>

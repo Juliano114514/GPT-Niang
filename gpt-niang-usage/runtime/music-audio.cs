@@ -12,12 +12,14 @@ public sealed class GptMusicCapture : IDisposable {
     GptMusicAudioSnapshot state = new GptMusicAudioSnapshot();
     int disposed;readonly bool autoMusic;readonly uint explicitProcess;readonly GptMusicPlaybackSource source=new GptMusicPlaybackSource();uint selectedProcess;bool processUnsupported;
     readonly double startedAt=NowMs;long selectedCreation;bool fallbackPending;
+    readonly int beatsPerBar;
     public static double NowMs { get { return Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency; } }
-    public GptMusicCapture():this(false,0){}
-    public GptMusicCapture(bool preferMusic):this(preferMusic,0){}
-    public GptMusicCapture(uint processId):this(false,processId){}
-    GptMusicCapture(bool preferMusic,uint processId) {
-        autoMusic=preferMusic;explicitProcess=processId;
+    public GptMusicCapture():this(false,0u,0){}
+    public GptMusicCapture(bool preferMusic):this(preferMusic,0u,0){}
+    public GptMusicCapture(uint processId):this(false,processId,0){}
+    public GptMusicCapture(bool preferMusic,int beatsPerBar):this(preferMusic,0u,beatsPerBar){}
+    GptMusicCapture(bool preferMusic,uint processId,int beatsPerBar) {
+        autoMusic=preferMusic;explicitProcess=processId;this.beatsPerBar=beatsPerBar;
         worker = new Thread(Run) { IsBackground = true, Name = "GPT Niang playback rhythm" };
         worker.SetApartmentState(ApartmentState.MTA); worker.Start();
     }
@@ -97,11 +99,11 @@ public sealed class GptMusicCapture : IDisposable {
             Check(client.Initialize(0, target==0?0x20000u:0x80020000u, 1000000, 0, format, IntPtr.Zero));
             iid = typeof(IMusicCaptureClient).GUID; object service;
             Check(client.GetService(ref iid, out service)); capture = (IMusicCaptureClient)service;
-            var detector = new GptMusicBeatDetector((int)wave.Rate, wave.Channels);
+            var detector = new GptMusicBeatDetector((int)wave.Rate, wave.Channels, beatsPerBar);
             double[] values = new double[wave.Channels]; byte[] buffer = new byte[65536];
             long lastSequence = 0,lastBeats=0; double nextDeviceCheck = NowMs + 1000,nextSourceCheck=NowMs+100,previousPacket=NowMs;
             Check(client.Start()); started = true;
-            lock (gate) { state.Running = true; state.RhythmLocked=false; state.Error = null; state.SampleRate = (int)wave.Rate; state.Channels = wave.Channels;state.Level=state.LowLevel=state.Drive=state.Strength=state.BeatAtMs=0;state.SourceProcessId=target;state.Source=target==0?"system-playback":"music-player";state.CaptureReadyMs=NowMs-startedAt; }
+            lock (gate) { state.Running = true; state.RhythmLocked=false; state.Error = null; state.SampleRate = (int)wave.Rate; state.Channels = wave.Channels;state.Level=state.LowLevel=state.Drive=state.Strength=state.BeatAtMs=state.NextDownbeatAtMs=0;state.SourceProcessId=target;state.Source=target==0?"system-playback":"music-player";state.CaptureReadyMs=NowMs-startedAt; }
             while (!stop.WaitOne(5)) {
                 uint packet; Check(capture.GetNextPacketSize(out packet));
                 while (packet > 0 && !stop.WaitOne(0)) {
@@ -132,6 +134,7 @@ public sealed class GptMusicCapture : IDisposable {
                             state.Candidates=tempo.Candidates;state.TempoResets=tempo.Resets;state.EnvelopeScore=tempo.EnvelopeScore;state.EnvelopeBpm=tempo.EnvelopeBpm;
                             state.RhythmLocked=tempo.Locked;state.BassCycle=tempo.UsesBassCycle;state.Confidence=tempo.Confidence;state.Bpm=tempo.Bpm;state.PeriodMs=tempo.Period*1000;
                             state.NextBeatAtMs=offset+tempo.NextBeat*1000;state.AudioLagMs=state.PacketAtMs-audioAt;
+                            state.NextDownbeatAtMs=detector.NextDownbeat>0?offset+detector.NextDownbeat*1000:0;
                             state.BeatSequence+=tempo.Sequence-lastBeats;lastBeats=tempo.Sequence;
                             if (detector.Sequence != lastSequence) {
                                 state.Sequence += detector.Sequence - lastSequence; state.BeatAtMs = state.PacketAtMs;
@@ -167,9 +170,14 @@ public sealed class GptMusicCapture : IDisposable {
         else v = BitConverter.ToInt32(b, at) / 2147483648.0;
         return Double.IsNaN(v) || Double.IsInfinity(v) ? 0 : Math.Max(-1, Math.Min(1, v));
     }
-    public void Dispose() {
-        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+    bool SignalStop() {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return false;
         try { stop.Set(); } catch (ObjectDisposedException) { }
+        return true;
+    }
+    public void RequestStop() { SignalStop(); }
+    public void Dispose() {
+        if (!SignalStop()) return;
         if (Thread.CurrentThread != worker) worker.Join(250);
     }
 }
@@ -178,7 +186,7 @@ public sealed class GptMusicAudioSnapshot : ICloneable {
     public uint SourceProcessId;public string Source="system-playback";public double CaptureReadyMs,FirstPacketMs;
     public bool Running,RhythmLocked,BassCycle; public string Error; public int SampleRate, Channels;
     public long Sequence; public double BeatAtMs, PacketAtMs, Strength, Level, LowLevel, Drive;
-    public long BeatSequence;public double Confidence,Bpm,PeriodMs,NextBeatAtMs,AudioLagMs;
+    public long BeatSequence;public double Confidence,Bpm,PeriodMs,NextBeatAtMs,NextDownbeatAtMs,AudioLagMs;
     public int Candidates,Discontinuities,TempoResets;
     public double EnvelopeScore,EnvelopeBpm;
     public object Clone() { return MemberwiseClone(); }
@@ -196,11 +204,15 @@ public sealed class GptMusicBeatDetector {
     public double LowLevel { get; private set; }
     public double Drive { get; private set; }
     readonly double rate;
+    readonly GptMusicMeterTracker meter;
     public readonly GptMusicTempoTracker Tempo=new GptMusicTempoTracker();
     public double Time {get{return seconds;}}
-    public GptMusicBeatDetector(int sampleRate, int channelCount) {
+    public double NextDownbeat {get{return meter==null||!Tempo.Locked?0:meter.NextDownbeat;}}
+    public GptMusicBeatDetector(int sampleRate, int channelCount):this(sampleRate,channelCount,0){}
+    internal GptMusicBeatDetector(int sampleRate, int channelCount, int beatsPerBar) {
         if (sampleRate < 8000 || channelCount < 1 || channelCount > 32) throw new ArgumentOutOfRangeException();
         rate = sampleRate; channels = channelCount; window = Math.Max(64, sampleRate / 100);
+        if(beatsPerBar>0)meter=new GptMusicMeterTracker(beatsPerBar);
         high = new MusicBiquad[channels]; low = new MusicBiquad[channels];
         rhythmHigh=new MusicBiquad[4,channels];rhythmLow=new MusicBiquad[4,channels];
         for(int b=0;b<4;b++)for(int c=0;c<channels;c++){rhythmHigh[b,c]=new MusicBiquad(sampleRate,220*Math.Pow(2,b),true);rhythmLow[b,c]=new MusicBiquad(sampleRate,440*Math.Pow(2,b),false);}
@@ -240,7 +252,63 @@ public sealed class GptMusicBeatDetector {
         for(int b=0;b<4;b++){double value=Math.Sqrt(rhythmEnergy[b]/(count*channels)),floor=.0001*signalScale;rhythmFlux+=Math.Max(0,Math.Log((floor+value)/(floor+rhythmPrevious[b])))*.25;rhythmPrevious[b]=value;rhythmEnergy[b]=0;}
         Tempo.ObserveEnvelope(seconds,LowLevel,Level,rhythmFlux,signalScale);
         Tempo.Step(seconds,onset,Level>.00012*signalScale);
+        if(meter!=null)meter.Push(seconds,dt,raw,Tempo);
         lastLow = LowLevel; sum = broad = 0; count = 0;
+    }
+}
+
+// Estimate the first beat for a selected meter using recurring accents on the
+// existing tempo grid. Uniform or conflicting accents leave the downbeat unknown.
+sealed class GptMusicMeterTracker {
+    readonly int beats;
+    readonly double[] levels=new double[800];
+    readonly double[] accents;
+    int write,count,resets;
+    double nextEstimate;
+    public double NextDownbeat {get;private set;}
+
+    public GptMusicMeterTracker(int beats) {
+        this.beats=beats;
+        accents=new double[2*beats];
+    }
+    public void Push(double now,double dt,double level,GptMusicTempoTracker tempo) {
+        if(resets!=tempo.Resets){
+            resets=tempo.Resets;count=0;NextDownbeat=0;nextEstimate=0;
+        }
+        levels[write]=level;write=(write+1)%levels.Length;
+        count=Math.Min(levels.Length,count+1);
+        if(!tempo.Locked){NextDownbeat=0;return;}
+        if(now<nextEstimate)return;
+        nextEstimate=now+.12;
+        NextDownbeat=0;
+        double period=tempo.Period, latest=tempo.NextBeat-period;
+        if(now-latest<.13)latest-=period;
+        int lastSample=(int)Math.Round((now-latest+(accents.Length-1)*period+.04)/dt);
+        if(lastSample>=count)return;
+        for(int i=0;i<accents.Length;i++) {
+            double at=latest-i*period;
+            int from=Math.Max(0,(int)Math.Round((now-at-.12)/dt));
+            int to=(int)Math.Round((now-at+.04)/dt);
+            double peak=0;
+            for(int sample=from;sample<=to;sample++)
+                peak=Math.Max(peak,levels[(write-1-sample+levels.Length)%levels.Length]);
+            accents[i]=peak;
+        }
+        int first=StrongestBeat(0);
+        if(first<0||first!=StrongestBeat(beats))return;
+        double downbeat=latest-first*period;
+        NextDownbeat=downbeat+(Math.Floor((now-downbeat)/(beats*period))+1)*beats*period;
+    }
+    int StrongestBeat(int start) {
+        int best=0;
+        double strongest=0,second=0;
+        for(int i=0;i<beats;i++) {
+            double strength=accents[start+i];
+            if(beats==6)strength+=.15*accents[start+(i+3)%beats];
+            if(strength>strongest){second=strongest;strongest=strength;best=i;}
+            else second=Math.Max(second,strength);
+        }
+        return strongest>0&&strongest>second*1.18?best:-1;
     }
 }
 

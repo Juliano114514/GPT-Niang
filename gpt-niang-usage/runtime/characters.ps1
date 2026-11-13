@@ -94,7 +94,7 @@ function Read-WidgetCharacterImage([string]$Path,[ref]$HitPixels) {
     $converted.CopyPixels($pixels,$stride,0)
     $image=[Windows.Media.Imaging.BitmapSource]::Create($width,$height,96,96,[Windows.Media.PixelFormats]::Bgra32,$null,$pixels,$stride)
     $image.Freeze()
-    if($HitPixels){$HitPixels.Value=$pixels}
+    if($null-ne $HitPixels){$HitPixels.Value=$pixels}
     return $image
   }catch{
     if($_.Exception.Message-match '^(请选择|支持 |图片)'){throw}

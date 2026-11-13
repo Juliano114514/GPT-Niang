@@ -142,9 +142,235 @@ public sealed class GptMusicMotion {
 
 // No PowerShell callbacks run on these animation or capture frames. Native
 // movement is delegated to the existing follower's single position writer.
+sealed class GptMusicFrameClock : IDisposable {
+    readonly Window window;
+    readonly Func<bool> visible;
+    readonly EventHandler frame;
+    readonly DispatcherTimer wake;
+    double lastFrame = GptMusicCapture.NowMs;
+
+    public GptMusicFrameClock(Window window, Func<bool> visible, EventHandler frame) {
+        this.window=window;this.visible=visible;this.frame=frame;
+        CompositionTarget.Rendering+=Render;
+        // Layered windows may stop receiving composition frames while occluded.
+        wake=new DispatcherTimer(DispatcherPriority.Background,window.Dispatcher);
+        wake.Interval=TimeSpan.FromMilliseconds(16);
+        wake.Tick+=Wake;
+        wake.Start();
+    }
+    void Render(object sender,EventArgs e) {
+        lastFrame=GptMusicCapture.NowMs;
+        frame(sender,e);
+    }
+    void Wake(object sender,EventArgs e) {
+        if(visible()&&window.IsVisible&&GptMusicCapture.NowMs-lastFrame>=32)Render(sender,e);
+    }
+    public void Dispose() {
+        CompositionTarget.Rendering-=Render;
+        wake.Stop();
+        wake.Tick-=Wake;
+    }
+}
+
+public sealed class GptMeditationVisual : IDisposable, System.ComponentModel.INotifyPropertyChanged {
+    readonly Image girl;
+    BitmapSource openEyes, closedEyes;
+    readonly FrameworkElement[] figures;
+    readonly Transform[] originalTransforms;
+    readonly ScaleTransform press=new ScaleTransform();
+    readonly Canvas root;
+    readonly MeditationTea tea;
+    readonly GptMusicFrameClock clock;
+    readonly double startedAt=GptMusicCapture.NowMs;
+    GptMusicCapture capture;
+    double deadline, noticeUntil, epoch, period=1000, transitionAt, transitionFrom;
+    double detectedPeriod, detectedBeat, lastLockedPeriod, lastLockedBeat;
+    int beats=8, lastBeat=-1;
+
+    public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
+    public double Bpm {get{return 60000/period;}}
+    public string Meter {get;private set;}
+    public int Beats {get{return beats;}}
+    public string RhythmText {get{return String.Format(System.Globalization.CultureInfo.InvariantCulture,"{0:0.#} BPM · {1} 拍",Bpm,Meter);}}
+    public string CycleText {get{return String.Format("每 {0} 拍",beats);}}
+    public string PhaseText {get;private set;}
+    public string AutoText {get{return capture!=null?"识别中":detectedPeriod>0?"等拍点":noticeUntil>0?"未识别":"自动 ↻";}}
+
+    public GptMeditationVisual(Window window, Image girl, FrameworkElement halo, FrameworkElement tint,
+                               DrawingGroup cup, Geometry steam, Brush steamBrush, BitmapSource closedEyes) {
+        this.girl=girl;
+        openEyes=(BitmapSource)girl.Source;
+        this.closedEyes=closedEyes;
+        root=(Canvas)girl.Parent;
+        tea=new MeditationTea(cup,steam,steamBrush);
+        figures=halo==null?new FrameworkElement[]{girl}:new FrameworkElement[]{girl,halo,tint};
+        originalTransforms=new Transform[figures.Length];
+        for(int i=0;i<figures.Length;i++) {
+            originalTransforms[i]=figures[i].RenderTransform;
+            var transform=new TransformGroup();
+            transform.Children.Add(originalTransforms[i]);
+            transform.Children.Add(press);
+            figures[i].RenderTransform=transform;
+        }
+        root.Children.Add(tea);
+        RefreshLayout();
+        Meter="4/4";epoch=GptMusicCapture.NowMs;
+        SetBeat(0,(beats+1)/2);
+        clock=new GptMusicFrameClock(window,delegate {return true;},Frame);
+    }
+
+    void Notify(string property) {
+        var handler=PropertyChanged;
+        if(handler!=null)handler(this,new System.ComponentModel.PropertyChangedEventArgs(property));
+    }
+    public void SetPortrait(BitmapSource normal, BitmapSource closed) {
+        openEyes=normal;
+        closedEyes=closed;
+        UpdatePortrait(lastBeat<(beats+1)/2);
+        RefreshLayout();
+    }
+    void UpdatePortrait(bool exhaling) {
+        var source=exhaling&&closedEyes!=null?closedEyes:openEyes;
+        if(girl.Source!=source)girl.Source=source;
+    }
+    public void RefreshLayout() {
+        Rect alpha=GptMusicVisual.AlphaBounds(openEyes,girl.Width,girl.Height);
+        press.CenterX=alpha.Left+alpha.Width/2;press.CenterY=alpha.Bottom;
+        double size=Math.Min(alpha.Width,alpha.Height);
+        tea.Width=size*.29;tea.Height=tea.Width*1.35;
+        Canvas.SetLeft(tea,Math.Max(0,Canvas.GetLeft(girl)+alpha.Left-size*.025));
+        Canvas.SetTop(tea,Canvas.GetTop(girl)+alpha.Bottom-tea.Height);
+    }
+    public void Recognize() {
+        CancelRecognition();
+        ClearNotice();
+        lastLockedPeriod=lastLockedBeat=0;
+        capture=new GptMusicCapture(true,Meter[0]-'0');
+        deadline=GptMusicCapture.NowMs+8000;
+        Notify("AutoText");
+    }
+    void StopCapture() {
+        if(capture==null)return;
+        capture.RequestStop();
+        capture=null;
+    }
+    void CancelRecognition() {
+        if(capture==null&&detectedPeriod==0)return;
+        StopCapture();detectedPeriod=0;
+        Notify("AutoText");
+    }
+    void ClearNotice() {
+        if(noticeUntil==0)return;
+        noticeUntil=0;
+        Notify("AutoText");
+    }
+    public void Apply(double bpm, string meter, int breathBeats) {
+        CancelRecognition();
+        ClearNotice();
+        SetRhythm(60000/bpm,meter,breathBeats,GptMusicCapture.NowMs);
+    }
+    void SetRhythm(double beatPeriod, string meter, int breathBeats, double start) {
+        period=beatPeriod;Meter=meter;beats=breathBeats;epoch=start;
+        transitionAt=start;transitionFrom=1-press.ScaleY;
+        lastBeat=-1;SetBeat(0,(beats+1)/2);
+        Notify("RhythmText");Notify("CycleText");
+    }
+    void SetBeat(int beat, int exhale) {
+        if(beat==lastBeat)return;
+        lastBeat=beat;
+        bool exhaling=beat<exhale;
+        UpdatePortrait(exhaling);
+        PhaseText=exhaling?"呼 "+(beat+1):"吸 "+(beat-exhale+1);
+        Notify("PhaseText");
+    }
+    void UpdateRecognition(double now) {
+        if(capture==null)return;
+        var audio=capture.Snapshot();
+        bool locked=audio.Running&&audio.RhythmLocked&&audio.PeriodMs>0&&
+                    now-audio.PacketAtMs<=150&&audio.NextBeatAtMs>0;
+        if(locked) {
+            lastLockedPeriod=audio.PeriodMs;
+            lastLockedBeat=audio.NextBeatAtMs;
+        }
+        bool downbeat=locked&&audio.NextDownbeatAtMs>0;
+        if(!downbeat&&now<deadline&&audio.Error==null)return;
+        StopCapture();
+        if(lastLockedPeriod<=0) {
+            noticeUntil=now+2500;
+            Notify("AutoText");
+            return;
+        }
+        detectedPeriod=lastLockedPeriod;
+        detectedBeat=downbeat?audio.NextDownbeatAtMs:lastLockedBeat;
+        double interval=detectedPeriod*(downbeat?Meter[0]-'0':1);
+        if(detectedBeat<now)detectedBeat+=Math.Ceiling((now-detectedBeat)/interval)*interval;
+        Notify("AutoText");
+    }
+    void Frame(object sender,EventArgs e) {
+        double now=GptMusicCapture.NowMs;
+        UpdateRecognition(now);
+        if(detectedPeriod>0&&now>=detectedBeat) {
+            int meterBeats=Meter[0]-'0';
+            int bars=(int)Math.Round(6000/(detectedPeriod*meterBeats),MidpointRounding.AwayFromZero);
+            bars=Math.Max(1,Math.Min(32/meterBeats,bars));
+            SetRhythm(detectedPeriod,Meter,bars*meterBeats,detectedBeat);
+            detectedPeriod=0;
+            Notify("AutoText");
+        }
+        if(noticeUntil>0&&now>=noticeUntil)ClearNotice();
+        double beat=((now-epoch)/period)%beats;
+        int exhale=(beats+1)/2;
+        SetBeat((int)beat,exhale);
+        double phase=beat<exhale?beat/exhale:(beats-beat)/(beats-exhale);
+        double bend=.03*(1-Math.Cos(Math.PI*phase));
+        double blend=Math.Min(1,(now-transitionAt)/350);
+        press.ScaleY=1-(bend+(transitionFrom-bend)*(1-blend)*(1-blend));
+        tea.SetTime(now-startedAt);
+    }
+    public void Dispose() {
+        clock.Dispose();
+        CancelRecognition();
+        UpdatePortrait(false);
+        root.Children.Remove(tea);
+        for(int i=0;i<figures.Length;i++)figures[i].RenderTransform=originalTransforms[i];
+    }
+
+    sealed class MeditationTea : FrameworkElement {
+        readonly DrawingGroup cup;
+        readonly Geometry steam;
+        readonly Pen steamPen;
+        int frame;
+
+        public MeditationTea(DrawingGroup cup, Geometry steam, Brush steamBrush) {
+            this.cup=cup;this.steam=steam;
+            steamPen=new Pen(steamBrush,1.6){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round};
+            steamPen.Freeze();
+            IsHitTestVisible=false;
+        }
+        public void SetTime(double elapsed) {
+            int next=(int)(elapsed/50)%100;
+            if(next==frame)return;
+            frame=next;
+            InvalidateVisual();
+        }
+        protected override void OnRender(DrawingContext dc) {
+            dc.PushTransform(new ScaleTransform(ActualWidth/48,ActualHeight/65));
+            dc.DrawDrawing(cup);
+            for(int i=0;i<2;i++) {
+                double phase=(frame/100.0+i*.5)%1;
+                dc.PushOpacity(.72*Math.Sin(Math.PI*phase));
+                dc.PushTransform(new TranslateTransform(i*9+1.5*Math.Sin(phase*2*Math.PI),-phase*19));
+                dc.DrawGeometry(null,steamPen,steam);
+                dc.Pop();dc.Pop();
+            }
+            dc.Pop();
+        }
+    }
+}
+
 public sealed class GptMusicVisual : IDisposable {
     readonly Window window;readonly Image girl;readonly FrameworkElement bubble;readonly Canvas root;
-    readonly DispatcherTimer wake;
+    readonly GptMusicFrameClock frameClock;
     DispatcherOperation pendingPosition;
     readonly Action<int,int> followOffset;readonly GptMusicCapture capture;
     readonly MusicArt under,over;readonly ScaleTransform press=new ScaleTransform();readonly Color[] palette;
@@ -197,13 +423,9 @@ public sealed class GptMusicVisual : IDisposable {
         root.Children.Insert(root.Children.IndexOf(girl),under);root.Children.Insert(root.Children.IndexOf(girl)+1,over);
         capture=new GptMusicCapture(true);Enabled=true;ColorEnabled=false;
         RefreshLayout();lastFrame=GptMusicCapture.NowMs;
-        girl.PreviewMouseMove+=Drag;CompositionTarget.Rendering+=Frame;
-        // Transparent/occluded WPF windows may stop requesting render frames.
-        // Wake only when that happens; normal motion still follows Rendering.
-        wake=new DispatcherTimer(DispatcherPriority.Background,window.Dispatcher);
-        wake.Interval=TimeSpan.FromMilliseconds(16);wake.Tick+=Wake;wake.Start();
+        girl.PreviewMouseMove+=Drag;
+        frameClock=new GptMusicFrameClock(window,delegate { return Enabled&&!disposed&&visible; },Frame);
     }
-    void Wake(object sender,EventArgs e){if(Enabled&&!disposed&&visible&&window.IsVisible&&GptMusicCapture.NowMs-lastFrame>=32)Frame(sender,e);}
     public void RefreshLayout() {
         var source=(BitmapSource)girl.Source;alpha=AlphaBounds(source,girl.Width,girl.Height);
         double left=175-(alpha.Left+alpha.Width/2),top=350-alpha.Bottom;
@@ -326,7 +548,7 @@ public sealed class GptMusicVisual : IDisposable {
         if(msg==0x84){handled=true;return new IntPtr(-1);}if(msg==0x21){handled=true;return new IntPtr(3);}return IntPtr.Zero;
     }
     public void Stop(bool keepPosition) {
-        if(disposed)return;disposed=true;Enabled=false;girl.PreviewMouseMove-=Drag;CompositionTarget.Rendering-=Frame;CancelPendingPosition();wake.Stop();wake.Tick-=Wake;capture.Dispose();
+        if(disposed)return;disposed=true;Enabled=false;girl.PreviewMouseMove-=Drag;frameClock.Dispose();CancelPendingPosition();capture.Dispose();
         // A window that is already closing can reject PointToScreen. Layout and
         // native resources must still be released in that case.
         Point foot=new Point();bool haveFoot=false;
