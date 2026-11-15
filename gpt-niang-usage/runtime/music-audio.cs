@@ -317,8 +317,9 @@ sealed class GptMusicMeterTracker {
 public sealed class GptMusicTempoTracker {
     readonly double[] times=new double[32],weights=new double[32];int count;
     double lastActive=-10,lastConfirmed=-10,lastEmitted=-10;
-    // Derived 10 ms bass novelty only: no waveform or external audio library.
+    // Derived 10 ms onset energy; no waveform or external audio library.
     readonly double[] novelty=new double[800];int noveltyCount,noveltyWrite;
+    readonly double[] centeredNovelty=new double[600],correlations=new double[102];
     double previousEnvelopeLow,previousFlux,smoothedFlux,noveltyMean,nextEstimate,pendingPeriod,pendingSince,lastFluxAt=-10;int pendingMatches;
     bool envelopeClock;
     public bool Locked {get;private set;}
@@ -339,9 +340,8 @@ public sealed class GptMusicTempoTracker {
         return novelty[a]+(novelty[b]-novelty[a])*(ago-n);
     }
     double Correlation(int lag,int length){
-        double mean=0;for(int i=0;i<length;i++)mean+=Novelty(i);mean/=length;
         double xy=0,xx=0,yy=0;
-        for(int i=0;i<length-lag;i++){double a=Novelty(i)-mean,b=Novelty(i+lag)-mean;xy+=a*b;xx+=a*a;yy+=b*b;}
+        for(int i=0;i<length-lag;i++){double a=centeredNovelty[i],b=centeredNovelty[i+lag];xy+=a*b;xx+=a*a;yy+=b*b;}
         return xy/Math.Sqrt(Math.Max(1e-16,xx*yy));
     }
     // A clear kick train must not be doubled by eighth-note high hats.
@@ -354,33 +354,45 @@ public sealed class GptMusicTempoTracker {
         }
         return hits>=4&&now-first>=Period*2.5&&matched>total*.80&&now-lastConfirmed<Period*1.4;
     }
-    double PeakSamples(int lag,int length){
-        double left=Correlation(lag-1,length),center=Correlation(lag,length),right=Correlation(lag+1,length);
+    double PeakSamples(int lag){
+        double left=correlations[lag-1],center=correlations[lag],right=correlations[lag+1];
         double curve=left-2*center+right,offset=curve<0?Math.Max(-.5,Math.Min(.5,.5*(left-right)/curve)):0;
         return Math.Max(28,Math.Min(100,lag+offset));
     }
-    // A half-speed grid places alternate real hits on opposite phases.
-    // Compare that evidence before accepting an octave of the beat period.
-    double PhaseCoherence(double samples,int length){
+    // Opposite phases cancel on a half-speed grid. On a double-speed grid,
+    // every other slot may be empty even when phase coherence is high.
+    double GridSupport(double samples,int length){
         double angle=2*Math.PI/samples,cs=Math.Cos(angle),sn=Math.Sin(angle),x=1,y=0,c=0,s=0,total=0;
         for(int i=0;i<length;i++){
             double v=Novelty(i);c+=v*x;s+=v*y;total+=v;
             double next=x*cs-y*sn;y=x*sn+y*cs;x=next;
         }
-        return Math.Sqrt(c*c+s*s)/Math.Max(1e-12,total);
+        if(total<1e-12)return 0;
+        double phase=Math.Atan2(s,c)/angle;
+        if(phase<2)phase+=samples;
+        double sum=0,square=0;
+        int slots=0;
+        for(double ago=phase;ago<length-2;ago+=samples){
+            double v=Novelty(ago)+Novelty(ago-2)+Novelty(ago+2);
+            sum+=v;square+=v*v;slots++;
+        }
+        return Math.Sqrt(c*c+s*s)/total*sum/Math.Sqrt(Math.Max(1e-16,slots*square));
     }
     public void ObserveEnvelope(double now,double low,double broad){ObserveEnvelope(now,low,broad,-1);}
-    // Low-frequency activity remains the gate. Other drum bands corroborate
-    // the tempo so a syncopated bass phrase cannot dictate the entire grid.
+    // Recent low-frequency activity gates acquisition. Faster transients
+    // contribute their timing even between bass attacks.
     public void ObserveEnvelope(double now,double low,double broad,double drumFlux){ObserveEnvelope(now,low,broad,drumFlux,1);}
     public void ObserveEnvelope(double now,double low,double broad,double drumFlux,double signalScale){
         signalScale=Math.Max(.001,Math.Min(1,signalScale));
         double floor=.0001*signalScale,flux=Math.Max(0,Math.Log((floor+low)/(floor+previousEnvelopeLow)));previousEnvelopeLow=low;
         bool bassEvidence=true;if(drumFlux>=0){
             int bassHits=0;for(int k=0;k<count;k++)if(now-times[k]<=3.3)bassHits++;
-            bassEvidence=bassHits>=3;flux=.10*flux+.90*drumFlux;
+            bassEvidence=bassHits>=3;
+            // Bass attacks and higher-band transients need not land in the
+            // same 10 ms frame. Retain both once bass activity is established.
+            flux=.30*flux+.70*drumFlux;
         }
-        if(low<.00008*signalScale||low<broad*.10)flux=0;
+        if(broad<.00012*signalScale||(drumFlux<0&&low<.00008*signalScale))flux=0;
         smoothedFlux+=(flux-smoothedFlux)*(1-Math.Exp(-.01/.020));flux=smoothedFlux;
         novelty[noveltyWrite]=flux;noveltyWrite=(noveltyWrite+1)%novelty.Length;noveltyCount=Math.Min(novelty.Length,noveltyCount+1);
         noveltyMean+=(flux-noveltyMean)*.02;
@@ -400,32 +412,31 @@ public sealed class GptMusicTempoTracker {
         if(Locked&&!envelopeClock&&OnsetsSupportClock(now)){pendingPeriod=0;return;}
         if(!bassEvidence||noveltyCount<160||now<nextEstimate||now-lastFluxAt>.25)return;
         nextEstimate=now+.20;
-        int length=Math.Min(600,noveltyCount-1),bestLag=0;double best=0;
+        int length=Math.Min(centeredNovelty.Length,noveltyCount-1),bestLag=0;
+        double mean=0,best=0,bestRank=0,samples=0;
+        for(int i=0;i<length;i++){double v=Novelty(i);centeredNovelty[i]=v;mean+=v;}
+        mean/=length;
+        for(int i=0;i<length;i++)centeredNovelty[i]-=mean;
+        for(int lag=27;lag<=101;lag++)correlations[lag]=Correlation(lag,length);
         for(int lag=28;lag<=100;lag++){
-            double fundamental=Correlation(lag,length);
-            if(fundamental<.10)continue;
-            double score=fundamental+.5*Correlation(lag*2,length);
-            if(score>best){best=score;bestLag=lag;}
-        }
-        if(bestLag>0){
-            int half=(int)Math.Round(PeakSamples(bestLag,length)/2);
-            if(half>=28){
-                double baseScore=Correlation(half,length),halfScore=baseScore+.5*Correlation(half*2,length);
-                if(baseScore>=.10&&baseScore>Correlation(bestLag,length)*.50&&halfScore>best*.50){
-                    bestLag=half;best=halfScore;
-                }
-            }
+            double fundamental=correlations[lag];
+            if(fundamental<.10||length<lag*3||fundamental<correlations[lag-1]||fundamental<correlations[lag+1])continue;
+            int twice=lag*2;
+            double score=fundamental+.5*(twice<=101?correlations[twice]:Correlation(twice,length)),candidate=PeakSamples(lag);
+            // A repeated motif can have a strong correlation at twice the
+            // pulse. Prefer grids that also explain where attacks land.
+            double rank=score*GridSupport(candidate,length);
+            if(rank>bestRank){bestRank=rank;best=score;bestLag=lag;samples=candidate;}
         }
         EnvelopeScore=best;EnvelopeBpm=bestLag==0?0:6000.0/bestLag;
         double required=noveltyCount<320?.50:.24;
-        if(bestLag==0||best<required||length<bestLag*3){pendingPeriod=0;return;}
-        double samples=PeakSamples(bestLag,length),p=samples*.01;
+        if(bestLag==0||best<required){pendingPeriod=0;return;}
+        double p=samples*.01;
         if(Locked){
             if(Math.Abs(p-Period)<Period*.05){Period+=(p-Period)*.12;pendingPeriod=0;return;}
             int lag=(int)Math.Round(Period*100);
-            double current=(Correlation(lag,length)+.5*Correlation(lag*2,length))*PhaseCoherence(Period*100,length);
-            bool supportedSubdivision=Math.Abs(Period-2*p)<Period*.05&&Correlation(bestLag,length)>Correlation(lag,length)*.50;
-            if(!supportedSubdivision&&best*PhaseCoherence(samples,length)<=current){pendingPeriod=0;return;}
+            double current=(Correlation(lag,length)+.5*Correlation(lag*2,length))*GridSupport(Period*100,length);
+            if(bestRank<=current){pendingPeriod=0;return;}
         }
         if(pendingPeriod>0&&Math.Abs(p-pendingPeriod)<pendingPeriod*.05)pendingMatches++;
         else{pendingSince=now;pendingMatches=1;}

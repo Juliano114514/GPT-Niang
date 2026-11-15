@@ -173,6 +173,7 @@ sealed class GptMusicFrameClock : IDisposable {
 }
 
 public sealed class GptMeditationVisual : IDisposable, System.ComponentModel.INotifyPropertyChanged {
+    const double PreferredCycleMs=12000;
     readonly Image girl;
     BitmapSource openEyes, closedEyes;
     readonly FrameworkElement[] figures;
@@ -185,7 +186,7 @@ public sealed class GptMeditationVisual : IDisposable, System.ComponentModel.INo
     GptMusicCapture capture;
     double deadline, noticeUntil, epoch, period=1000, transitionAt, transitionFrom;
     double detectedPeriod, detectedBeat, lastLockedPeriod, lastLockedBeat;
-    int beats=8, lastBeat=-1;
+    int beats=(int)(PreferredCycleMs/1000), lastBeat=-1;
 
     public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
     public double Bpm {get{return 60000/period;}}
@@ -311,7 +312,7 @@ public sealed class GptMeditationVisual : IDisposable, System.ComponentModel.INo
         UpdateRecognition(now);
         if(detectedPeriod>0&&now>=detectedBeat) {
             int meterBeats=Meter[0]-'0';
-            int bars=(int)Math.Round(6000/(detectedPeriod*meterBeats),MidpointRounding.AwayFromZero);
+            int bars=(int)Math.Round(PreferredCycleMs/(detectedPeriod*meterBeats),MidpointRounding.AwayFromZero);
             bars=Math.Max(1,Math.Min(32/meterBeats,bars));
             SetRhythm(detectedPeriod,Meter,bars*meterBeats,detectedBeat);
             detectedPeriod=0;
